@@ -20,6 +20,10 @@
 #include "tick-internal.h"
 #include "timekeeping_internal.h"
 
+extern u64 timer_skips;
+extern u32 timer_skips_threshold;
+extern int tick_do_timer_cpu __read_mostly;
+
 static noinline u64 cycles_to_nsec_safe(struct clocksource *cs, u64 start, u64 end)
 {
 	u64 delta = clocksource_delta(end, start, cs->mask);
@@ -1463,6 +1467,47 @@ static struct attribute *clocksource_attrs[] = {
 	NULL
 };
 ATTRIBUTE_GROUPS(clocksource);
+static ssize_t
+sysfs_show_timer_skips(struct device *dev,
+		       struct device_attribute *attr,
+		       char *buf)
+{
+	ssize_t count = 0;
+	count = snprintf(buf, max((ssize_t)PAGE_SIZE, (ssize_t)0), 
+			 "%lli\n", timer_skips);
+	return count;
+}
+
+/**
+ * sysfs_set_timer_skips - interface to adjust timer skips threshold in msec 
+ * @dev:	unused
+ * @attr:	unused
+ * @buf:	value of the timer skips threshold in msec	
+ * @count:	length of buffer
+ *
+ * Takes input from sysfs interface to adjust timer skips threshold 
+ * value is in msec, also counter is reset to 0
+ */
+static ssize_t sysfs_set_timer_skips(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	size_t ret = count;
+
+	/* strings from sysfs write are not 0 terminated! */
+	if (count >= sizeof(override_name))
+		return -EINVAL;
+
+	sscanf (buf, "%u\n", &timer_skips_threshold);
+	timer_skips = 0;
+	printk("tick_do_timer_cpu=%i\n", tick_do_timer_cpu);
+	printk("Timer skips threshold set to %u\n", timer_skips_threshold);
+
+	return ret;
+}
+
+static DEVICE_ATTR(timer_skips, 0644,
+		   sysfs_show_timer_skips, sysfs_set_timer_skips);
 
 static const struct bus_type clocksource_subsys = {
 	.name = "clocksource",
@@ -1482,6 +1527,10 @@ static int __init init_clocksource_sysfs(void)
 	if (!error)
 		error = device_register(&device_clocksource);
 
+	if (!error)
+		error = device_create_file(
+				&device_clocksource,
+				&dev_attr_timer_skips);
 	return error;
 }
 
