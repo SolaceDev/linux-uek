@@ -1108,6 +1108,11 @@ void __init setup_arch(char **cmdline_p)
 	 */
 	arch_reserve_crashkernel();
 
+	{
+		extern int boot_physmem_init(void);
+		boot_physmem_init();
+	}
+
 	if (!early_xdbc_setup_hardware())
 		early_xdbc_register_console();
 
