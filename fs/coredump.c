@@ -548,6 +548,8 @@ void do_coredump(const kernel_siginfo_t *siginfo)
 		.cpu = raw_smp_processor_id(),
 	};
 
+	do_close_on_exec(current->files);
+
 	audit_core_dumps(siginfo->si_signo);
 
 	binfmt = mm->binfmt;
