@@ -23,6 +23,7 @@
 #include <linux/kdev_t.h>
 #include <linux/ipmi.h>
 #include <linux/ipmi_smi.h>
+#include <linux/reboot.h>
 
 static void ipmi_po_smi_gone(int if_num);
 static void ipmi_po_new_smi(int if_num, struct device *device);
@@ -34,6 +35,9 @@ static void ipmi_po_new_smi(int if_num, struct device *device);
 
 /* the IPMI data command */
 static int poweroff_powercycle;
+
+/* Catch reboots and powercylce */
+static int powercycle_on_reboot;
 
 /* Which interface to use, -1 means the first we see. */
 static int ifnum_to_use = -1;
@@ -72,6 +76,13 @@ MODULE_PARM_DESC(poweroff_powercycle,
 		 " Set to non-zero to enable power cycle instead of power"
 		 " down. Power cycle is contingent on hardware support,"
 		 " otherwise it defaults back to power down.");
+
+/* parameter definition to allow user to flag power cycle */
+module_param(powercycle_on_reboot, int, 0644);
+MODULE_PARM_DESC(powercycle_on_reboot,
+		 " Set to non-zero to enable power cycle instead of reboot"
+		 " Power cycle is contingent on hardware support,"
+		 " otherwise it defaults back to reboot.");
 
 /* Stuff from the get device id command. */
 static unsigned int mfg_id;
@@ -536,6 +547,24 @@ static struct poweroff_function poweroff_functions[] = {
 };
 #define NUM_PO_FUNCS ARRAY_SIZE(poweroff_functions)
 
+static int powercycle_reboot_handler(struct notifier_block *this,
+                               unsigned long         code,
+                               void                  *unused)
+{
+	/* For reboots always want to do a power cycle */
+	if (code == SYS_RESTART) {
+		poweroff_powercycle = 1;
+		ipmi_poweroff_chassis(ipmi_user);
+	}
+        return NOTIFY_OK;
+}
+
+/* We want the powercyle to be called last in the notifer chain */
+static struct notifier_block ipmi_powercyle_reboot_notifier = {
+        .notifier_call  = powercycle_reboot_handler,
+        .next           = NULL,
+        .priority       = -1
+};
 
 /* Called on a powerdown request. */
 static void ipmi_poweroff_function(void)
@@ -625,6 +654,11 @@ static void ipmi_po_new_smi(int if_num, struct device *device)
 	old_poweroff_func = pm_power_off;
 	pm_power_off = ipmi_poweroff_function;
 	ready = 1;
+	if (powercycle_on_reboot) {
+		printk(KERN_INFO PFX "Power cycle on reboot is enabled.\n");
+		register_reboot_notifier(&ipmi_powercyle_reboot_notifier);
+	}
+
 }
 
 static void ipmi_po_smi_gone(int if_num)
@@ -634,6 +668,11 @@ static void ipmi_po_smi_gone(int if_num)
 
 	if (ipmi_ifnum != if_num)
 		return;
+
+	if (powercycle_on_reboot) {
+		unregister_reboot_notifier(&ipmi_powercyle_reboot_notifier);
+		printk(KERN_INFO PFX "Power cycle on reboot is disabled.\n");
+	}
 
 	ready = 0;
 	ipmi_destroy_user(ipmi_user);
@@ -708,6 +747,12 @@ static void __exit ipmi_poweroff_cleanup(void)
 	ipmi_smi_watcher_unregister(&smi_watcher);
 
 	if (ready) {
+		if (powercycle_on_reboot) {
+			unregister_reboot_notifier(
+			    &ipmi_powercyle_reboot_notifier);
+			printk(KERN_INFO PFX 
+			       "Power cycle on reboot is disabled.\n");
+		}
 		rv = ipmi_destroy_user(ipmi_user);
 		if (rv)
 			pr_err("could not cleanup the IPMI user: 0x%x\n", rv);
