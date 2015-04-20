@@ -25,7 +25,7 @@ struct iovec
  */
  
 #define UIO_FASTIOV	8
-#define UIO_MAXIOV	1024
+#define UIO_MAXIOV	16384
 
 
 #endif /* _UAPI__LINUX_UIO_H */
