@@ -1,0 +1,25 @@
+GCC:
+Using built-in specs.
+COLLECT_GCC=/opt/soldev/toolchains/v4/targets/centos7-i686/bin/x86_64-target-linux-gnu-gcc
+COLLECT_LTO_WRAPPER=/opt/soldev/toolchains/v4/targets/centos7-i686/libexec/gcc/x86_64-target-linux-gnu/4.6.4/lto-wrapper
+Target: x86_64-target-linux-gnu
+Configured with: /opt/soldev/toolchains/v4/src/gcc-4.6.4/configure
+--with-pkgversion='SolOS toolchain gcc for centos7-i686 target'
+--target=x86_64-target-linux-gnu --enable-multilib --enable-targets=all
+--with-system-zlib --prefix=/opt/soldev/toolchains/v4/targets/centos7-i686
+--with-local-prefix=/local-include-not-specified-at-configuration
+--with-native-system-header-dir=/native-system-header-dir-not-specified-at-configuration
+--enable-languages=c,c++ --disable-gcj
+--with-sysroot=/opt/soldev/targets/centos7-i686
+Thread model: posix
+gcc version 4.6.4 (SolOS toolchain gcc for centos7-i686 target)
+
+gmake:
+GNU Make 3.81
+Copyright (C) 2006  Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.
+There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.
+
+This program built for x86_64-redhat-linux-gnu
+
