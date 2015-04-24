@@ -74,7 +74,8 @@ MODULE_PARM_DESC(ifnum_to_use, "The interface number to use for the watchdog "
 module_param(poweroff_powercycle, int, 0644);
 MODULE_PARM_DESC(poweroff_powercycle,
 		 " Set to non-zero to enable power cycle instead of power"
-		 " down. Power cycle is contingent on hardware support,"
+		 " down. Set to -1 to use the default pm power off."
+		 " Power cycle is contingent on hardware support,"
 		 " otherwise it defaults back to power down.");
 
 /* parameter definition to allow user to flag power cycle */
@@ -652,7 +653,11 @@ static void ipmi_po_new_smi(int if_num, struct device *device)
 		poweroff_functions[i].platform_type);
 	specific_poweroff_func = poweroff_functions[i].poweroff_func;
 	old_poweroff_func = pm_power_off;
-	pm_power_off = ipmi_poweroff_function;
+	if (poweroff_powercycle == -1) {
+		printk(KERN_INFO PFX "Using default pm power off.\n");
+	} else {
+		pm_power_off = ipmi_poweroff_function;
+	}
 	ready = 1;
 	if (powercycle_on_reboot) {
 		printk(KERN_INFO PFX "Power cycle on reboot is enabled.\n");
