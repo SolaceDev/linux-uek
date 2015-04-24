@@ -24,6 +24,7 @@
 #include <linux/export.h>
 #include <linux/atomic.h>
 #include <linux/sched/clock.h>
+#include <linux/mm.h>		// For show_mem()
 
 #include <asm/cpu_entry_area.h>
 #include <asm/traps.h>
@@ -307,6 +308,9 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 
 	pr_emerg_ratelimited("Uhhuh. NMI received for unknown reason %02x on CPU %d.\n",
 			     reason, smp_processor_id());
+
+	show_mem(0);
+	show_state();
 
 	if (unknown_nmi_panic || panic_on_unrecovered_nmi)
 		nmi_panic(regs, "NMI: Not continuing");
