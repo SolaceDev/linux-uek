@@ -24,6 +24,7 @@
 #include <linux/ipmi.h>
 #include <linux/ipmi_smi.h>
 #include <linux/reboot.h>
+#include <linux/workqueue.h>
 
 static void ipmi_po_smi_gone(int if_num);
 static void ipmi_po_new_smi(int if_num, struct device *device);
@@ -581,10 +582,38 @@ static void ipmi_poweroff_function(void)
    will be grabbed by this code and used to perform the powerdown. */
 static void ipmi_po_new_smi(int if_num, struct device *device)
 {
+	bool ret = false;
+	init_work_t *work;
+	
+	if (!init_wq) {
+		printk(KERN_ERR PFX "Work queue is not initialized for "
+				    "ipmi power off\n");
+		return;
+	}
+	work = (init_work_t *)kmalloc(sizeof(init_work_t), GFP_KERNEL);
+	if (!work) {
+		printk(KERN_ERR PFX "Failed to alloc work queue memory for "
+				    "ipmi power off\n");
+		return;
+	}
+
+	INIT_WORK( (struct work_struct *)work, ipmi_po_new_smi_work);
+	work->if_num = if_num;
+	ret = queue_work(init_wq, (struct work_struct *)work);
+	if (!ret)
+		printk(KERN_ERR PFX "Failed to queue ipmi power off init for "
+				    " new smi\n");
+}
+
+static void ipmi_po_new_smi_work(struct work_struct *work)
+{
 	struct ipmi_system_interface_addr smi_addr;
 	struct kernel_ipmi_msg            send_msg;
 	int                               rv;
 	int                               i;
+	init_work_t *queued_work = (init_work_t*)work;
+
+	int if_num = queued_work->if_num;
 
 	if (ready)
 		return;
@@ -726,6 +755,7 @@ static int __init ipmi_poweroff_init(void)
 	}
 #endif
 
+	init_wq = create_workqueue("ipmi_po_init_queue");
 	rv = ipmi_smi_watcher_register(&smi_watcher);
 
 #ifdef CONFIG_PROC_FS
@@ -750,6 +780,9 @@ static void __exit ipmi_poweroff_cleanup(void)
 #endif
 
 	ipmi_smi_watcher_unregister(&smi_watcher);
+
+	flush_workqueue(init_wq);
+	destroy_workqueue(init_wq);
 
 	if (ready) {
 		if (powercycle_on_reboot) {
