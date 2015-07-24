@@ -554,7 +554,7 @@ static int powercycle_reboot_handler(struct notifier_block *this,
                                void                  *unused)
 {
 	/* For reboots always want to do a power cycle */
-	if (code == SYS_RESTART) {
+	if (code == SYS_RESTART && powercycle_on_reboot) {
 		poweroff_powercycle = 1;
 		ipmi_poweroff_chassis(ipmi_user);
 	}
