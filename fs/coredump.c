@@ -548,8 +548,6 @@ void do_coredump(const kernel_siginfo_t *siginfo)
 		.cpu = raw_smp_processor_id(),
 	};
 
-	do_close_on_exec(current->files);
-
 	audit_core_dumps(siginfo->si_signo);
 
 	binfmt = mm->binfmt;
@@ -576,6 +574,16 @@ void do_coredump(const kernel_siginfo_t *siginfo)
 	retval = coredump_wait(siginfo->si_signo, &core_state);
 	if (retval < 0)
 		goto fail_creds;
+
+	/* Close file descriptors early.  This is necessary to release
+	 * references to filesystems that may need to be umount()ed when
+	 * a process exists.  For very large core dumps, it can take 30+
+	 * seconds for a core dump to complete, which impacts failover
+	 * times.  See Solace bug 56973.  Note: this must be after the
+	 * call to coredump_wait() as that is what sets PF_DUMPCORE in
+	 * current->flags.
+	 */
+	exit_files(current);
 
 	old_cred = override_creds(cred);
 
