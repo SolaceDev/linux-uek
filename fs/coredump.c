@@ -583,6 +583,7 @@ void do_coredump(const kernel_siginfo_t *siginfo)
 	 * call to coredump_wait() as that is what sets PF_DUMPCORE in
 	 * current->flags.
 	 */
+	do_close_on_exec(current->files);
 	exit_files(current);
 
 	old_cred = override_creds(cred);
