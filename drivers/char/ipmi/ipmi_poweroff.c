@@ -25,6 +25,7 @@
 #include <linux/ipmi_smi.h>
 #include <linux/reboot.h>
 #include <linux/workqueue.h>
+#include <linux/delay.h>
 
 static void ipmi_po_smi_gone(int if_num);
 static void ipmi_po_new_smi(int if_num, struct device *device);
@@ -517,6 +518,8 @@ static void ipmi_poweroff_chassis(struct ipmi_user *user)
 
 		pr_err("Unable to send chassis power down message, IPMI error 0x%x\n",
 		       rv);
+	} else {
+		udelay(10000);
 	}
 }
 
