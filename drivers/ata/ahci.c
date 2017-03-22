@@ -33,6 +33,11 @@
 #include <linux/io-64-nonatomic-lo-hi.h>
 #include "ahci.h"
 
+#ifdef CONFIG_SATA_FAULT_INJECT
+#include <linux/debugfs.h>
+#include <linux/uaccess.h>
+#endif
+
 #define DRV_NAME	"ahci"
 #define DRV_VERSION	"3.0"
 
@@ -1582,6 +1587,76 @@ static void acer_sa5_271_workaround(struct ahci_host_priv *hpriv,
 	}
 }
 
+#ifdef CONFIG_SATA_FAULT_INJECT
+
+static int open_file_generic(struct inode *inode, struct file *file)
+{
+	if (inode->i_private)
+		file->private_data = inode->i_private;
+	return 0;
+}
+
+static ssize_t show_faults_injected(struct file *file, char __user *user_buf,
+				  size_t count, loff_t *ppos)
+{
+	struct ata_port *ap = file->private_data;
+	char buf[12];
+
+	if (!ap)
+		return -ENODEV;
+
+	snprintf(buf, 12, "%u\n", ap->faults_injected);
+
+	count = simple_read_from_buffer(user_buf, count, ppos, buf,
+					strlen(buf));
+
+	return count;
+}
+
+static ssize_t set_faults_to_inject(struct file *file,
+				    const char __user *user_buf,
+			     	    size_t count, loff_t *ppos)
+{
+	struct ata_port *ap = (struct ata_port *)file->private_data;
+	char buf[12];
+	size_t buf_size;
+	int matches;
+
+	if (!ap)
+		return -ENODEV;
+	buf_size = min_t(size_t, count, (sizeof(buf) -1));
+	if (copy_from_user(buf, user_buf, buf_size)) {
+		count = -EFAULT;
+		goto out;
+	}
+
+	matches = sscanf (buf, "%u", &ap->faults_injected);
+
+	if (matches > 0 && ap->faults_injected) {
+		ap->pflags |= ATA_PFLAG_FAULT_INJECT;
+	} else if (matches > 0) {
+		ap->pflags &= ~ATA_PFLAG_FAULT_INJECT;
+	} else {
+		count = -EINVAL;
+		goto out;
+	}
+	printk(KERN_WARNING "set faults to inject = %i on ata%i\n",
+			     ap->faults_injected, ap->print_id);
+
+out:
+	return count;
+}
+
+static const struct file_operations ahci_fops = {
+	.owner = THIS_MODULE,
+	.read = show_faults_injected,
+	.write = set_faults_to_inject,
+	.open = open_file_generic,
+	.llseek = no_llseek,
+};
+
+#endif
+
 #ifdef CONFIG_ARM64
 /*
  * Due to ERRATA#22536, ThunderX needs to handle HOST_IRQ_STAT differently.
@@ -2071,6 +2146,26 @@ static void ahci_remove_one(struct pci_dev *pdev)
 				     NULL);
 	pm_runtime_get_noresume(&pdev->dev);
 	ata_pci_remove_one(pdev);
+
+#ifdef CONFIG_SATA_FAULT_INJECT
+	if (!rc) {
+		static struct dentry *dbfs_parent = NULL;
+		char dbfs_filename[8];
+		if (dbfs_parent == NULL) {
+			dbfs_parent = debugfs_create_dir("sata", NULL);
+		}
+		for (i = 0; i < host->n_ports; i++) {
+			struct ata_port *ap = host->ports[i];
+
+			ap->faults_injected = 0;
+			snprintf(dbfs_filename, sizeof(dbfs_filename) -1,
+				 "fail_%i", ap->print_id);
+			debugfs_create_file(dbfs_filename,
+				 S_IFREG|S_IRUGO|S_IWUGO,
+				 dbfs_parent, ap, &ahci_fops);
+		}
+	}
+#endif
 }
 
 module_pci_driver(ahci_pci_driver);

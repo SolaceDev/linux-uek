@@ -38,7 +38,7 @@
 #include "libata-transport.h"
 
 #define ATA_PORT_ATTRS		3
-#define ATA_LINK_ATTRS		3
+#define ATA_LINK_ATTRS		4
 #define ATA_DEV_ATTRS		9
 
 struct scsi_transport_template;
@@ -386,6 +386,36 @@ static DEVICE_ATTR(field, S_IRUGO, show_ata_link_##field, NULL)
 ata_link_linkspeed_attr(hw_sata_spd_limit, fls);
 ata_link_linkspeed_attr(sata_spd_limit, fls);
 ata_link_linkspeed_attr(sata_spd, noop);
+
+static ssize_t
+show_ata_link_failfast(struct device *dev,
+		       struct device_attribute *attr, char *buf)
+{
+	struct ata_link *link = transport_class_to_link(dev);
+
+	return sprintf(buf, "%d\n",
+		       (link->flags & ATA_LFLAG_DISABLE_FAILFAST ? 0:1));
+}
+
+static ssize_t
+store_ata_link_failfast(struct device *dev, struct device_attribute *attr,
+			const char *buf, size_t count)
+{
+	unsigned long failfast;
+	struct ata_link *link = transport_class_to_link(dev);
+	failfast = simple_strtoul(buf, NULL, 0);
+	if (failfast == 0) {
+		link->flags |= ATA_LFLAG_DISABLE_FAILFAST;
+	} else if (failfast == 1) {
+		link->flags &= ~ATA_LFLAG_DISABLE_FAILFAST;
+	} else {
+		return -EINVAL;
+	}
+	return count;
+}
+
+static DEVICE_ATTR(failfast, S_IRUGO | S_IWUSR,
+		   show_ata_link_failfast, store_ata_link_failfast);
 
 
 static DECLARE_TRANSPORT_CLASS(ata_link_class,
@@ -749,6 +779,9 @@ static int ata_tdev_add(struct ata_device *ata_dev)
 #define SETUP_LINK_ATTRIBUTE(field)					\
 	SETUP_TEMPLATE(link_attrs, field, S_IRUGO, 1)
 
+#define SETUP_LINK_RW_ATTRIBUTE(field)                                  \
+	SETUP_TEMPLATE(link_attrs, field, S_IRUGO | S_IWUSR, 1)
+
 #define SETUP_PORT_ATTRIBUTE(field)					\
 	SETUP_TEMPLATE(port_attrs, field, S_IRUGO, 1)
 
@@ -796,6 +829,7 @@ struct scsi_transport_template *ata_attach_transport(void)
 	SETUP_LINK_ATTRIBUTE(hw_sata_spd_limit);
 	SETUP_LINK_ATTRIBUTE(sata_spd_limit);
 	SETUP_LINK_ATTRIBUTE(sata_spd);
+	SETUP_LINK_RW_ATTRIBUTE(failfast);
 	BUG_ON(count > ATA_LINK_ATTRS);
 	i->link_attrs[count] = NULL;
 

@@ -576,6 +576,29 @@ void ata_scsi_error(struct Scsi_Host *host)
 
 }
 
+void ata_scsi_check_failfast(struct ata_port *ap, struct request *rq)
+{
+	struct ata_link *link;
+	if (blk_noretry_request(rq)) {
+		ata_for_each_link(link, ap, EDGE) {
+			if (!(link->flags & ATA_LFLAG_DISABLE_FAILFAST)) {
+				link->flags |= ATA_LFLAG_NO_RETRY;
+				ata_link_warn(link,
+					"eh failfast without retries "
+					"flags=%x\n", rq->cmd_flags);
+			} else {
+				ata_link_warn(link, "eh failfast disabled\n");
+			}
+		}
+	} else {
+		ata_for_each_link(link, ap, EDGE) {
+			link->flags &= ~ATA_LFLAG_NO_RETRY;
+			ata_link_warn(link, "eh with retries flags=%x\n",
+					     rq->cmd_flags);
+		}
+	}
+}
+
 /**
  * ata_scsi_cmd_error_handler - error callback for a list of commands
  * @host:	scsi host containing the port
@@ -629,6 +652,7 @@ void ata_scsi_cmd_error_handler(struct Scsi_Host *host, struct ata_port *ap,
 
 	list_for_each_entry_safe(scmd, tmp, eh_work_q, eh_entry) {
 		struct ata_queued_cmd *qc;
+			struct request *rq = scmd->request;
 
 		ata_qc_for_each_raw(ap, qc, i) {
 			if (qc->flags & ATA_QCFLAG_ACTIVE &&
@@ -644,6 +668,8 @@ void ata_scsi_cmd_error_handler(struct Scsi_Host *host, struct ata_port *ap,
 				qc->flags |= ATA_QCFLAG_EH;
 				nr_timedout++;
 			}
+				/* scmd is errored or timed out */
+				ata_scsi_check_failfast(ap, rq);
 		} else {
 			/* Normal completion occurred after
 			 * SCSI timeout but before this point.
@@ -2576,7 +2602,7 @@ int ata_eh_reset(struct ata_link *link, int classify,
 	struct ata_link *failed_link;
 	struct ata_device *dev;
 	unsigned long deadline, now;
-	ata_reset_fn_t reset;
+	ata_reset_fn_t reset = NULL;
 	unsigned long flags;
 	u32 sstatus;
 	int nr_unknown, rc;
@@ -2606,6 +2632,16 @@ int ata_eh_reset(struct ata_link *link, int classify,
 	spin_lock_irqsave(ap->lock, flags);
 	ap->pflags |= ATA_PFLAG_RESETTING;
 	spin_unlock_irqrestore(ap->lock, flags);
+
+	if (lflags & ATA_LFLAG_NO_RETRY) {
+		rc = -EPERM;
+		failed_link = link;
+		link->flags &= ~ATA_LFLAG_NO_RETRY;
+		max_tries = 0;
+		ata_link_warn(link, "Skipping Restart");
+		deadline = ata_deadline(jiffies, 0);
+		goto fail;
+	}
 
 	ata_eh_about_to_do(link, NULL, ATA_EH_RESET);
 
