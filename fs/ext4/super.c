@@ -740,6 +740,12 @@ static void ext4_handle_error(struct super_block *sb, bool force_ro, int error,
 	 */
 	smp_wmb();
 	sb->s_flags |= SB_RDONLY;
+	/* Solace: added extra printk, see bug 44832 */
+#define SOLACE_PANIC_WARNING						   \
+		"EXT4-fs: system is forcing a kernel panic to avoid data " \
+		"corruption/deadlock due to a fatal filesystem error.  "   \
+		"Please check spool filesystem and connection to SAN.\n"
+		printk(KERN_CRIT SOLACE_PANIC_WARNING);
 }
 
 static void update_super_work(struct work_struct *work)
@@ -968,6 +974,7 @@ void __ext4_std_error(struct super_block *sb, const char *function,
 	fsnotify_sb_error(sb, NULL, errno ? errno : EFSCORRUPTED);
 
 	ext4_handle_error(sb, false, -errno, 0, 0, function, line);
+	}
 }
 
 void __ext4_msg(struct super_block *sb,
