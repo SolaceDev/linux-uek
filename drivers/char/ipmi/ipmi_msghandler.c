@@ -42,6 +42,10 @@
 
 extern int panic_timeout;
 
+#ifdef CONFIG_NMI_PANIC_NOW
+extern uint64_t panic_now;
+#endif
+
 #ifdef CONFIG_IPMI_PANIC_KMSG_DUMP
 #ifdef DEBUG_KMD
 #define DPRINT_KMD(args...) printk(KERN_ERR args)
@@ -5353,6 +5357,11 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 	struct ipmi_recv_msg              recv_msg;
 
 	unsigned long sel_avail_space = 1024;
+
+#ifdef CONFIG_NMI_PANIC_NOW
+	/* Skip if panic_now is set */
+	if (unlikely(panic_now)) return;
+#endif
 
 	si = (struct ipmi_system_interface_addr *) &addr;
 	si->addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
