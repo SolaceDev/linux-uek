@@ -22,6 +22,11 @@
 
 static DEFINE_PER_CPU(struct perf_event *, watchdog_ev);
 
+#ifdef CONFIG_NMI_PANIC_NOW
+uint64_t panic_now = 0;
+EXPORT_SYMBOL(panic_now);
+#endif
+
 static atomic_t watchdog_cpus = ATOMIC_INIT(0);
 
 #ifdef CONFIG_HARDLOCKUP_CHECK_TIMESTAMP
@@ -108,6 +113,12 @@ static void watchdog_overflow_callback(struct perf_event *event,
 	/* Ensure the watchdog never gets throttled */
 	event->hw.interrupts = 0;
 
+
+#ifdef CONFIG_NMI_PANIC_NOW
+	if (unlikely(panic_now)) {
+		panic("External Panic Requested");
+	}
+#endif
 	if (!watchdog_check_timestamp())
 		return;
 
