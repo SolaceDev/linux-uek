@@ -5206,13 +5206,13 @@ static void dummy_recv_done_handler(struct ipmi_recv_msg *msg)
 }
 
 /*
- * Inside a panic, send a message and wait for a response.
+ * Inside a panic, send a message.
  */
-static void ipmi_panic_request_and_wait(struct ipmi_smi *intf,
-					struct ipmi_addr *addr,
-					struct kernel_ipmi_msg *msg,
-					struct ipmi_recv_msg *recv_msg,
-					unsigned int retries)
+static void ipmi_panic_request(ipmi_smi_t           intf,
+			       struct ipmi_addr     *addr,
+			       struct kernel_ipmi_msg *msg,
+			       struct ipmi_recv_msg *recv_msg,
+			       unsigned int retries)
 {
 	struct ipmi_smi_msg  smi_msg;
 	struct ipmi_recv_msg local_recv_msg;
@@ -5238,9 +5238,22 @@ static void ipmi_panic_request_and_wait(struct ipmi_smi *intf,
 			    retries, 1); /* Don't retry, and don't wait. */
 	if (rv)
 		atomic_sub(2, &panic_done_count);
+
 	else if (intf->handlers->flush_messages)
 		intf->handlers->flush_messages(intf->send_info);
 
+}
+
+/*
+ * Inside a panic, send a message and wait for a response.
+ */
+static void ipmi_panic_request_and_wait(struct ipmi_smi *intf,
+					struct ipmi_addr *addr,
+					struct kernel_ipmi_msg *msg,
+					struct ipmi_recv_msg *recv_msg,
+					unsigned int retries)
+{
+	ipmi_panic_request(intf, addr, msg, recv_msg, retries);
 	while (atomic_read(&panic_done_count) != 0)
 		ipmi_poll(intf);
 }
@@ -5248,6 +5261,68 @@ static void ipmi_panic_request_and_wait(struct ipmi_smi *intf,
 #define IPMI_NETFN_CHASSIS_REQUEST     0
 #define IPMI_CHASSIS_CONTROL_CMD       0x02
 #define IPMI_CHASSIS_POWER_CYCLE       0x02    /* power cycle */
+
+
+/*
+ * This is a stripped down(no poweroff) version of
+ * ipmi_poweroff_chassis from ipmi_poweroff.c that is safe to
+ * run in panicied state.
+ */
+static void ipmi_powercycle_chassis (void)
+{
+	ipmi_smi_t                        intf;
+	struct kernel_ipmi_msg            send_msg;
+	unsigned char                     data[1];
+	struct ipmi_system_interface_addr *si;
+	struct ipmi_addr                  addr;
+
+	/*
+	 * Configure IPMI address for local access
+	 */
+	si = (struct ipmi_system_interface_addr *) &addr;
+	si->addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
+	si->channel = IPMI_BMC_CHANNEL;
+	si->lun = 0;
+
+	printk(KERN_EMERG "Powercycle via IPMI chassis control command\n");
+
+	/*
+	* Power down
+	*/
+	send_msg.netfn = IPMI_NETFN_CHASSIS_REQUEST;
+	send_msg.cmd = IPMI_CHASSIS_CONTROL_CMD;
+	data[0] = IPMI_CHASSIS_POWER_CYCLE;
+	send_msg.data = data;
+	send_msg.data_len = sizeof(data);
+
+	/* For every registered interface, send the event. */
+	list_for_each_entry_rcu(intf, &ipmi_interfaces, link) {
+		struct ipmi_recv_msg halt_recv_msg;
+
+		if (!intf->handlers)
+		{
+			printk(KERN_WARNING "IPMI Interface is not ready\n");
+			/* Interface is not ready. */
+			continue;
+		}
+		intf->run_to_completion = 1;
+		intf->handlers->set_run_to_completion(intf->send_info, 1);
+		intf->null_user_handler = NULL;
+
+		ipmi_panic_request_and_wait(intf, &addr, &send_msg,
+					    &halt_recv_msg, 4);
+
+		if (halt_recv_msg.msg_data[0] != 0)
+		{
+			printk(KERN_WARNING "IPMI command error 0x%02X\n",
+			halt_recv_msg.msg_data[0]);
+		}
+		else
+		{
+			printk(KERN_INFO "IPMI command successfull\n");
+		}
+	}
+}
 
 #ifdef CONFIG_IPMI_PANIC_STRING
 static void event_receiver_fetcher(struct ipmi_smi *intf,
@@ -5348,7 +5423,7 @@ unsigned int get_alloc_unit_size(ipmi_smi_t intf, struct ipmi_addr *addr,
 static void ipmi_kmsg_dump(struct kmsg_dumper *dumper, 
 			   enum kmsg_dump_reason reason)
 {
-        unsigned long panic_log_length;
+	unsigned long panic_log_length;
 	struct kernel_ipmi_msg            msg;
 	ipmi_smi_t                        intf;
 	unsigned char                     data[16];
@@ -5360,7 +5435,10 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 
 #ifdef CONFIG_NMI_PANIC_NOW
 	/* Skip if panic_now is set */
-	if (unlikely(panic_now)) return;
+	if (unlikely(panic_now)) {
+		ipmi_powercycle_chassis();
+		return;
+	}
 #endif
 
 	si = (struct ipmi_system_interface_addr *) &addr;
@@ -5457,8 +5535,7 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 			continue; /* No where to send the event. */
 
 
-		if (get_sel_info(intf, &addr, &recv_msg, &sel_info) 
-									== 0)
+		if (get_sel_info(intf, &addr, &recv_msg, &sel_info) == 0)
 		{
 			sel_avail_space = (sel_info.free[1] << 8) | 
 					  sel_info.free[0];
@@ -5479,10 +5556,14 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 				sel_avail_space, alloc_unit_size, write_size);
 
 		sel_avail_space = (sel_avail_space / alloc_unit_size) * 
-				write_size;
+				  write_size;
+
+		// If in a NMI there may be less time to write logs
+		if (in_nmi()) sel_avail_space = min(sel_avail_space,24576UL);
 
 		kmsg_dump_get_buffer(dumper, false, panic_buf, 
-				     min((unsigned long)PANIC_BUF_SIZE, sel_avail_space), 
+				     min((unsigned long)PANIC_BUF_SIZE,
+				     sel_avail_space), 
 				     &panic_log_length);
 
 		bytes_left = min(panic_log_length, sel_avail_space);
@@ -5492,25 +5573,31 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 		msg.data = data;
 		msg.data_len = write_size + header_size;
 
+		data[0] = 0;
+		data[1] = 0;
+		data[2] = 0xf2; /* OEM event without timestamp. */
+
 		while (bytes_left) {
 			unsigned long size = min(bytes_left,write_size);
 
 			bytes_left -= size; 
-			data[0] = 0;
-			data[1] = 0;
-			data[2] = 0xf2; /* OEM event without timestamp. */
 
 			/* Always give allocation_unit_size bytes, 
 			   so strncpy will fill it with zeroes. */
-			strncpy(data+header_size, panic_buf, write_size);
+			strncpy(data+header_size, panic_buf, size);
 			panic_buf += size;
 
-		        DPRINT_KMD("panic_buf %p, bytes_left=%li",
+			DPRINT_KMD("panic_buf %p, bytes_left=%li",
                                    panic_buf, bytes_left); 
-			ipmi_panic_request_and_wait(intf, &addr,
-						    &msg, &recv_msg, 0);
+			ipmi_panic_request(intf, &addr,
+					   &msg, &recv_msg, 0);
+			if (atomic_read(&panic_done_count) != 0)
+				ipmi_poll(intf);
 		}
-	}	
+		while (atomic_read(&panic_done_count) != 0)
+			ipmi_poll(intf);
+	}
+	if (in_nmi()) ipmi_powercycle_chassis(); 
 
 
 }
