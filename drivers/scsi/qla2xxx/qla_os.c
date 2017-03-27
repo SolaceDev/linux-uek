@@ -95,12 +95,12 @@ module_param(ql2xloginretrycount, int, S_IRUGO);
 MODULE_PARM_DESC(ql2xloginretrycount,
 		"Specify an alternate value for the NVRAM login retry count.");
 
-int ql2xallocfwdump = 1;
+int ql2xallocfwdump = 0;
 module_param(ql2xallocfwdump, int, S_IRUGO);
 MODULE_PARM_DESC(ql2xallocfwdump,
 		"Option to enable allocation of memory for a firmware dump "
 		"during HBA initialization.  Memory allocation requirements "
-		"vary by ISP type.  Default is 1 - allocate memory.");
+		"vary by ISP type.  Default is 0 - do not allocate memory.");
 
 int ql2xextended_error_logging;
 module_param(ql2xextended_error_logging, int, S_IRUGO|S_IWUSR);
@@ -3260,6 +3260,7 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	host = base_vha->host;
 	base_vha->req = req;
+	base_vha->fake_pause = 0;
 	if (IS_QLA2XXX_MIDTYPE(ha))
 		base_vha->mgmt_svr_loop_id =
 			qla2x00_reserve_mgmt_server_loop_id(base_vha);

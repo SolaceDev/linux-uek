@@ -5116,6 +5116,7 @@ typedef struct scsi_qla_host {
 	uint8_t	scm_fabric_connection_flags;
 
 	unsigned int irq_offset;
+	char            fake_pause;
 
 	u64 hw_err_cnt;
 	u64 interface_err_cnt;
