@@ -7554,8 +7554,11 @@ void __sched io_schedule(void)
 }
 EXPORT_SYMBOL(io_schedule);
 
-void sched_show_task(struct task_struct *p)
+<<<<<<< HEAD
+static void sched_show_task_filter(struct task_struct *p,
+				   unsigned long state_filter)
 {
+
 	unsigned long free = 0;
 	int ppid;
 
@@ -7581,10 +7584,11 @@ void sched_show_task(struct task_struct *p)
 	print_worker_info(KERN_INFO, p);
 	print_stop_info(KERN_INFO, p);
 	print_scx_info(KERN_INFO, p);
-	show_stack(p, NULL, KERN_INFO);
-	put_task_stack(p);
+	if (p->state >= state_filter) {
+		show_stack(p, NULL, KERN_INFO);
+		put_task_stack(p);
+	}
 }
-EXPORT_SYMBOL_GPL(sched_show_task);
 
 static inline bool
 state_filter_match(unsigned long state_filter, struct task_struct *p)
@@ -7610,7 +7614,14 @@ state_filter_match(unsigned long state_filter, struct task_struct *p)
 }
 
 
-void show_state_filter(unsigned int state_filter)
+void sched_show_task(struct task_struct *p)
+{
+    sched_show_task_filter(p, 0);
+}
+EXPORT_SYMBOL_GPL(sched_show_task);
+
+void show_state_filter_less_stack(unsigned long state_filter,
+				  unsigned long stack_state_filter)
 {
 	struct task_struct *g, *p;
 
@@ -7626,7 +7637,7 @@ void show_state_filter(unsigned int state_filter)
 		touch_nmi_watchdog();
 		touch_all_softlockup_watchdogs();
 		if (state_filter_match(state_filter, p))
-			sched_show_task(p);
+			sched_show_task_filter(p,stack_state_filter);
 	}
 
 #ifdef CONFIG_SCHED_DEBUG
@@ -7639,6 +7650,11 @@ void show_state_filter(unsigned int state_filter)
 	 */
 	if (!state_filter)
 		debug_show_all_locks();
+}
+
+void show_state_filter(unsigned long state_filter)
+{
+	show_state_filter_less_stack(state_filter, 0);
 }
 
 /**
