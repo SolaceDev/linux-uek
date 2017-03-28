@@ -1,5 +1,5 @@
 Name:		perf
-Version:	3.19.8
+Version:        4.10.0	
 Release:	solos%{?dist}
 Summary:    Performance analysis tools for Linux.	
 
@@ -38,16 +38,16 @@ rm -rf %{buildroot}
 %attr(755,root,root) /usr/bin/perf-read-vdso32
 %attr(755,root,root) /usr/bin/trace
 /usr/etc/bash_completion.d/perf
-/usr/lib/traceevent/plugins/plugin_cfg80211.so
-/usr/lib/traceevent/plugins/plugin_function.so
-/usr/lib/traceevent/plugins/plugin_hrtimer.so
-/usr/lib/traceevent/plugins/plugin_jbd2.so
-/usr/lib/traceevent/plugins/plugin_kmem.so
-/usr/lib/traceevent/plugins/plugin_kvm.so
-/usr/lib/traceevent/plugins/plugin_mac80211.so
-/usr/lib/traceevent/plugins/plugin_sched_switch.so
-/usr/lib/traceevent/plugins/plugin_scsi.so
-/usr/lib/traceevent/plugins/plugin_xen.so
+/usr/lib64/traceevent/plugins/plugin_cfg80211.so
+/usr/lib64/traceevent/plugins/plugin_function.so
+/usr/lib64/traceevent/plugins/plugin_hrtimer.so
+/usr/lib64/traceevent/plugins/plugin_jbd2.so
+/usr/lib64/traceevent/plugins/plugin_kmem.so
+/usr/lib64/traceevent/plugins/plugin_kvm.so
+/usr/lib64/traceevent/plugins/plugin_mac80211.so
+/usr/lib64/traceevent/plugins/plugin_sched_switch.so
+/usr/lib64/traceevent/plugins/plugin_scsi.so
+/usr/lib64/traceevent/plugins/plugin_xen.so
 /usr/lib64/libperf-gtk.so
 %attr(755,root,root) /usr/libexec/perf-core/perf-archive
 %attr(755,root,root) /usr/libexec/perf-core/perf-with-kcore
@@ -95,6 +95,14 @@ rm -rf %{buildroot}
 %attr(755,root,root) /usr/libexec/perf-core/scripts/python/bin/syscall-counts-by-pid-report
 %attr(755,root,root) /usr/libexec/perf-core/scripts/python/bin/syscall-counts-record
 %attr(755,root,root) /usr/libexec/perf-core/scripts/python/bin/syscall-counts-report
+%attr(755,root,root) /usr/libexec/perf-core/scripts/python/bin/compaction-times-record
+%attr(755,root,root) /usr/libexec/perf-core/scripts/python/bin/compaction-times-report
+%attr(755,root,root) /usr/libexec/perf-core/scripts/python/bin/stackcollapse-record
+%attr(755,root,root) /usr/libexec/perf-core/scripts/python/bin/stackcollapse-report
+%attr(755,root,root) /usr/libexec/perf-core/scripts/python/call-graph-from-postgresql.py
+%attr(755,root,root) /usr/libexec/perf-core/scripts/python/compaction-times.py
+%attr(755,root,root) /usr/libexec/perf-core/scripts/python/stackcollapse.py
+%attr(755,root,root) /usr/libexec/perf-core/scripts/python/stat-cpi.py
 /usr/libexec/perf-core/scripts/python/check-perf-trace.py
 /usr/libexec/perf-core/scripts/python/event_analyzing_sample.py
 /usr/libexec/perf-core/scripts/python/export-to-postgresql.py
@@ -143,3 +151,5 @@ rm -rf %{buildroot}
 %attr(755,root,root) /usr/libexec/perf-core/tests/attr/test-stat-group
 %attr(755,root,root) /usr/libexec/perf-core/tests/attr/test-stat-group1
 %attr(755,root,root) /usr/libexec/perf-core/tests/attr/test-stat-no-inherit
+/usr/share/doc/perf-tip/tips.txt
+/usr/share/perf-core/strace/groups/file
