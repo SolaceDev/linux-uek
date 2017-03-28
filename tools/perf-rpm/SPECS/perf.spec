@@ -1,6 +1,6 @@
 Name:		perf
 Version:	3.19.8
-Release:	solos52%{?dist}
+Release:	solos%{?dist}
 Summary:    Performance analysis tools for Linux.	
 
 Group:		Applications/Performance
