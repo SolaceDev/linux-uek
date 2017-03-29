@@ -2125,6 +2125,24 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (rc)
 		goto err_rm_sysfs_file;
 
+#ifdef CONFIG_SATA_FAULT_INJECT
+	static struct dentry *dbfs_parent = NULL;
+	char dbfs_filename[8];
+	if (dbfs_parent == NULL) {
+		dbfs_parent = debugfs_create_dir("sata", NULL);
+	}
+	for (i = 0; i < host->n_ports; i++) {
+		struct ata_port *ap = host->ports[i];
+
+		ap->faults_injected = 0;
+		snprintf(dbfs_filename, sizeof(dbfs_filename) -1,
+			 "fail_%i", ap->print_id);
+		debugfs_create_file(dbfs_filename,
+			 S_IFREG|S_IRUGO|S_IWUGO,
+			 dbfs_parent, ap, &ahci_fops);
+	}
+#endif
+
 	pm_runtime_put_noidle(&pdev->dev);
 	return 0;
 
@@ -2146,26 +2164,6 @@ static void ahci_remove_one(struct pci_dev *pdev)
 				     NULL);
 	pm_runtime_get_noresume(&pdev->dev);
 	ata_pci_remove_one(pdev);
-
-#ifdef CONFIG_SATA_FAULT_INJECT
-	if (!rc) {
-		static struct dentry *dbfs_parent = NULL;
-		char dbfs_filename[8];
-		if (dbfs_parent == NULL) {
-			dbfs_parent = debugfs_create_dir("sata", NULL);
-		}
-		for (i = 0; i < host->n_ports; i++) {
-			struct ata_port *ap = host->ports[i];
-
-			ap->faults_injected = 0;
-			snprintf(dbfs_filename, sizeof(dbfs_filename) -1,
-				 "fail_%i", ap->print_id);
-			debugfs_create_file(dbfs_filename,
-				 S_IFREG|S_IRUGO|S_IWUGO,
-				 dbfs_parent, ap, &ahci_fops);
-		}
-	}
-#endif
 }
 
 module_pci_driver(ahci_pci_driver);
