@@ -122,10 +122,10 @@ static void collect_wb_stats(struct wb_stats *stats,
 			stats->nr_dirty_time++;
 	spin_unlock(&wb->list_lock);
 
-	stats->nr_writeback += wb_stat(wb, WB_WRITEBACK);
-	stats->nr_reclaimable += wb_stat(wb, WB_RECLAIMABLE);
-	stats->nr_dirtied += wb_stat(wb, WB_DIRTIED);
-	stats->nr_written += wb_stat(wb, WB_WRITTEN);
+	stats->nr_writeback += wb_stat_sum(wb, WB_WRITEBACK);
+	stats->nr_reclaimable += wb_stat_sum(wb, WB_RECLAIMABLE);
+	stats->nr_dirtied += wb_stat_sum(wb, WB_DIRTIED);
+	stats->nr_written += wb_stat_sum(wb, WB_WRITTEN);
 	stats->wb_thresh += wb_calc_thresh(wb, stats->dirty_thresh);
 }
 
