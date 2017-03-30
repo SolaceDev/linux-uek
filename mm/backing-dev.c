@@ -156,6 +156,7 @@ static void bdi_collect_stats(struct backing_dev_info *bdi,
 static int bdi_debug_stats_show(struct seq_file *m, void *v)
 {
 	struct backing_dev_info *bdi = m->private;
+	struct bdi_writeback *wb = &bdi->wb;
 	unsigned long background_thresh;
 	unsigned long dirty_thresh;
 	struct wb_stats stats;
@@ -183,13 +184,13 @@ static int bdi_debug_stats_show(struct seq_file *m, void *v)
 		   "b_dirty_time:       %10lu\n"
 		   "bdi_list:           %10u\n"
 		   "state:              %10lx\n",
-		   K(stats.nr_writeback),
-		   K(stats.nr_reclaimable),
+		   (unsigned long) K(wb_stat_sum(wb, WB_WRITEBACK)),
+		   (unsigned long) K(wb_stat_sum(wb, WB_RECLAIMABLE)),
 		   K(stats.wb_thresh),
 		   K(dirty_thresh),
 		   K(background_thresh),
-		   K(stats.nr_dirtied),
-		   K(stats.nr_written),
+		   (unsigned long) K(wb_stat_sum(wb, WB_DIRTIED)),
+		   (unsigned long) K(wb_stat_sum(wb, WB_WRITTEN)),
 		   K(tot_bw),
 		   stats.nr_dirty,
 		   stats.nr_io,
