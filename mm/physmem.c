@@ -380,7 +380,7 @@ struct file_operations physmem_fops = {
  * So we alloc the needed memory here instead of bigphysarea_init().
  */
 static int have_initialized = 0;
-static unsigned long physmem_size = 100000;
+static unsigned long physmem_size = 0;
 
 int boot_physmem_init(void);
 //static
@@ -406,40 +406,35 @@ int boot_physmem_init(void)
 	dprintk(KERN_DEBUG "boot_physmem_init()\n");
 
         // Initialize our device info
+	printk(KERN_DEBUG "Allocating boot mem of size: %lu\n", physmem_size);
 
-        printk(KERN_DEBUG "Allocating boot mem of size: %d\n", (int)size);
-
-	if (!physmem_size)
-		goto fail;
+	if (!physmem_size) {
+		printk(KERN_WARNING "Not initializing physmem since no "
+                                    "physmem requested on command line\n");
+		return 0;
+	}
 
 	if (physmem_size & (PAGE_SIZE-1))
 		physmem_size += PAGE_SIZE - (physmem_size & (PAGE_SIZE-1));
 
+
         // Align the memory to a full page so that we can make sure we can mmap it
-        //physmemDevInfo.physMem_p = alloc_bootmem_low_pages(size);
         base = memblock_find_in_range(0, 0x7fff0000, physmem_size, PAGE_SIZE);
 	if (base == 0) {
-fail:
-            FERROR("alloc_bootmem failed for size %d\n", (int)size);
+            FERROR("alloc_bootmem failed for size %u\n", (unsigned)size);
                 return -ENOMEM;
 	}
 
-	dprintk(KERN_DEBUG "physmem: reserving 0x%08lx bytes at 0x%08Lx\n", physmem_size,
-		base);
+	dprintk(KERN_NOTICE "physmem: reserving 0x%08lx bytes at 0x%08Lx\n", 
+		physmem_size, base);
+
 	memblock_reserve(base, physmem_size);
 
 	physmemDevInfo.physMem_p = phys_to_virt(base);
         physmemDevInfo.remainingMem      = size;
         physmemDevInfo.totalMem          = size;
 
-        dprintk(KERN_DEBUG "Allocated boot mem at address: %p\n", physmemDevInfo.physMem_p);
-#if 0
-        if (!physmemDevInfo.physMem_p) {
-fail:
-            FERROR("alloc_bootmem failed for size %d\n", (int)size);
-                return -ENOMEM;
-        }
-#endif
+        dprintk(KERN_NOTICE "Allocated boot mem at address: %p\n", physmemDevInfo.physMem_p);
 
 	have_initialized = 1;
     
