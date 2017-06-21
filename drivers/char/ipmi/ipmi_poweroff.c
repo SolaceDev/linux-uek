@@ -568,7 +568,7 @@ static int powercycle_reboot_handler(struct notifier_block *this,
 static struct notifier_block ipmi_powercyle_reboot_notifier = {
         .notifier_call  = powercycle_reboot_handler,
         .next           = NULL,
-        .priority       = -1
+        .priority       = INT_MIN, 
 };
 
 /* Called on a powerdown request. */
