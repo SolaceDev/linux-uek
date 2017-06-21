@@ -5437,9 +5437,18 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 	/* Skip if panic_now is set */
 	if (unlikely(panic_now)) {
 		ipmi_powercycle_chassis();
+		udelay(10000);
 		return;
 	}
 #endif
+
+	if (reason == KMSG_DUMP_EMERG) {
+		ipmi_powercycle_chassis();
+		udelay(1000);
+		return;
+	} else if (reason > KMSG_DUMP_OOPS) {
+		return;
+	}
 
 	si = (struct ipmi_system_interface_addr *) &addr;
 	si->addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
@@ -5588,7 +5597,7 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 			panic_buf += size;
 
 			DPRINT_KMD("panic_buf %p, bytes_left=%li",
-                                   panic_buf, bytes_left); 
+				   panic_buf, bytes_left); 
 			ipmi_panic_request(intf, &addr,
 					   &msg, &recv_msg, 0);
 			if (atomic_read(&panic_done_count) != 0)
@@ -5597,8 +5606,10 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 		while (atomic_read(&panic_done_count) != 0)
 			ipmi_poll(intf);
 	}
-	if (in_nmi()) ipmi_powercycle_chassis(); 
-
+	if (in_nmi()) {
+		ipmi_powercycle_chassis(); 
+		udelay(10000);
+	}
 
 }
 #endif /*CONFIG_IPMI_PANIC_KMSG_DUMP*/
@@ -5882,12 +5893,12 @@ static int __init ipmi_init_msghandler_mod(void)
         }
 
 #ifdef CONFIG_IPMI_PANIC_KMSG_DUMP
-        panic_buf = kmalloc(PANIC_BUF_SIZE, GFP_KERNEL);
-        if (!panic_buf) {
-                printk(KERN_ERR "ipmi_msghandler: failed to allocate panic buf buffer\n");
-                return -ENOMEM;
-        }
-        memset(panic_buf, 0x00, PANIC_BUF_SIZE);
+	panic_buf = kmalloc(PANIC_BUF_SIZE, GFP_KERNEL);
+	if (!panic_buf) {
+		printk(KERN_ERR "ipmi_msghandler: failed to allocate panic buf buffer\n");
+		return -ENOMEM;
+	}
+	memset(panic_buf, 0x00, PANIC_BUF_SIZE);
 	dump.dump = ipmi_kmsg_dump;
 	dump.registered = 0;
 	err = kmsg_dump_register(&dump);
