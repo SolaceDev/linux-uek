@@ -7641,7 +7641,7 @@ void show_state_filter_less_stack(unsigned long state_filter,
 	}
 
 #ifdef CONFIG_SCHED_DEBUG
-	if (!state_filter)
+	if (!state_filter && !stack_state_filter)
 		sysrq_sched_debug_show();
 #endif
 	rcu_read_unlock();

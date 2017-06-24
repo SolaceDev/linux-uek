@@ -5568,7 +5568,7 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 				  write_size;
 
 		// If in a NMI there may be less time to write logs
-		if (in_nmi()) sel_avail_space = min(sel_avail_space,24576UL);
+		if (in_nmi()) sel_avail_space = min(sel_avail_space,2250UL * write_size);
 
 		kmsg_dump_get_buffer(dumper, false, panic_buf, 
 				     min((unsigned long)PANIC_BUF_SIZE,

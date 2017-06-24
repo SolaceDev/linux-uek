@@ -235,7 +235,6 @@ pci_serr_error(unsigned char reason, struct pt_regs *regs)
 	pr_emerg("NMI: PCI system error (SERR) for reason %02x on CPU %d.\n",
 		 reason, smp_processor_id());
 
-	show_regs(regs);
 	if (panic_on_unrecovered_nmi)
 		nmi_panic(regs, "NMI: Not continuing");
 
