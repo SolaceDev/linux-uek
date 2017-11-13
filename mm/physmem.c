@@ -21,7 +21,7 @@
 #include <linux/mm.h>
 #include <linux/list.h>
 #include <linux/device.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/io.h>
 #include <asm/ioctls.h>
 #include <linux/compat.h>
