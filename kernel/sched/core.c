@@ -7554,7 +7554,27 @@ void __sched io_schedule(void)
 }
 EXPORT_SYMBOL(io_schedule);
 
-<<<<<<< HEAD
+static inline bool
+state_filter_match(unsigned long state_filter, struct task_struct *p)
+{
+	/* no filter, everything matches */
+	if (!state_filter)
+		return true;
+
+	/* filter, but doesn't match */
+	if (!(p->state & state_filter))
+		return false;
+
+	/*
+	 * When looking for TASK_UNINTERRUPTIBLE skip TASK_IDLE (allows
+	 * TASK_KILLABLE).
+	 */
+	if (state_filter & TASK_UNINTERRUPTIBLE && p->state & TASK_IDLE)
+		return false;
+
+	return true;
+}
+
 static void sched_show_task_filter(struct task_struct *p,
 				   unsigned long state_filter)
 {
@@ -7584,34 +7604,12 @@ static void sched_show_task_filter(struct task_struct *p,
 	print_worker_info(KERN_INFO, p);
 	print_stop_info(KERN_INFO, p);
 	print_scx_info(KERN_INFO, p);
-	if (p->state >= state_filter) {
+	if (state_filter_match(state_filter,p)) {
 		show_stack(p, NULL, KERN_INFO);
 		put_task_stack(p);
 	}
 }
-
-static inline bool
-state_filter_match(unsigned long state_filter, struct task_struct *p)
-{
 	unsigned int state = READ_ONCE(p->__state);
-
-	/* no filter, everything matches */
-	if (!state_filter)
-		return true;
-
-	/* filter, but doesn't match */
-	if (!(state & state_filter))
-		return false;
-
-	/*
-	 * When looking for TASK_UNINTERRUPTIBLE skip TASK_IDLE (allows
-	 * TASK_KILLABLE).
-	 */
-	if (state_filter == TASK_UNINTERRUPTIBLE && (state & TASK_NOLOAD))
-		return false;
-
-	return true;
-}
 
 
 void sched_show_task(struct task_struct *p)
