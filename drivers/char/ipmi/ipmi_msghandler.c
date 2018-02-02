@@ -5590,6 +5590,10 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 			unsigned long size = min(bytes_left,write_size);
 
 			bytes_left -= size; 
+			/* Zero bytes if will not use full buffer */
+			if (size < write_size) {
+				memset(data+header_size+size, 0, write_size-size);
+			}
 
 			/* Always give allocation_unit_size bytes, 
 			   so strncpy will fill it with zeroes. */
