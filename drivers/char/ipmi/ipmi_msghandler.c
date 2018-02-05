@@ -37,6 +37,7 @@
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/kmsg_dump.h>
+#include <linux/nmi.h>
 
 #define IPMI_DRIVER_VERSION "39.2"
 
@@ -5604,11 +5605,13 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 				   panic_buf, bytes_left); 
 			ipmi_panic_request(intf, &addr,
 					   &msg, &recv_msg, 0);
+			touch_nmi_watchdog();
 			if (atomic_read(&panic_done_count) != 0)
 				ipmi_poll(intf);
 		}
 		while (atomic_read(&panic_done_count) != 0)
 			ipmi_poll(intf);
+		touch_nmi_watchdog();
 	}
 	if (in_nmi()) {
 		ipmi_powercycle_chassis(); 
