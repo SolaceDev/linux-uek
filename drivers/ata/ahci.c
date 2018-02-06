@@ -1613,6 +1613,40 @@ static ssize_t show_faults_injected(struct file *file, char __user *user_buf,
 	return count;
 }
 
+static ssize_t show_failfast(struct file *file, char __user *user_buf,
+				  size_t count, loff_t *ppos)
+{
+	struct ata_port *ap = file->private_data;
+	char buf[12];
+
+	if (!ap)
+		return -ENODEV;
+
+	snprintf(buf, 12, "%lu\n", ap->failfast_cnt);
+
+	count = simple_read_from_buffer(user_buf, count, ppos, buf,
+					strlen(buf));
+
+	return count;
+}
+
+static ssize_t show_non_failfast(struct file *file, char __user *user_buf,
+				  size_t count, loff_t *ppos)
+{
+	struct ata_port *ap = file->private_data;
+	char buf[12];
+
+	if (!ap)
+		return -ENODEV;
+
+	snprintf(buf, 12, "%lu\n", ap->non_failfast_cnt);
+
+	count = simple_read_from_buffer(user_buf, count, ppos, buf,
+					strlen(buf));
+
+	return count;
+}
+
 static ssize_t set_faults_to_inject(struct file *file,
 				    const char __user *user_buf,
 			     	    size_t count, loff_t *ppos)
@@ -1647,10 +1681,39 @@ out:
 	return count;
 }
 
-static const struct file_operations ahci_fops = {
+static ssize_t clear_cnts(struct file *file,
+			  const char __user *user_buf,
+			  size_t count, loff_t *ppos)
+{
+	struct ata_port *ap = (struct ata_port *)file->private_data;
+
+	if (!ap)
+		return -ENODEV;
+	ap->failfast_cnt = 0;
+	ap->non_failfast_cnt = 0;
+	return count;
+}
+
+static const struct file_operations ahci_fops_inject = {
 	.owner = THIS_MODULE,
 	.read = show_faults_injected,
 	.write = set_faults_to_inject,
+	.open = open_file_generic,
+	.llseek = no_llseek,
+};
+
+static const struct file_operations ahci_fops_failfast = {
+	.owner = THIS_MODULE,
+	.read = show_failfast,
+	.write = clear_cnts,
+	.open = open_file_generic,
+	.llseek = no_llseek,
+};
+
+static const struct file_operations ahci_fops_non_failfast = {
+	.owner = THIS_MODULE,
+	.read = show_non_failfast,
+	.write = clear_cnts,
 	.open = open_file_generic,
 	.llseek = no_llseek,
 };
@@ -1882,6 +1945,10 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	struct ata_host *host;
 	int n_ports, i, rc;
 	int ahci_pci_bar = AHCI_PCI_BAR_STANDARD;
+#ifdef CONFIG_SATA_FAULT_INJECT
+	static struct dentry *dbfs_parent = NULL;
+	char dbfs_filename[19];
+#endif
 
 	WARN_ON((int)ATA_MAX_QUEUE > AHCI_MAX_CMDS);
 
@@ -2126,8 +2193,6 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_rm_sysfs_file;
 
 #ifdef CONFIG_SATA_FAULT_INJECT
-	static struct dentry *dbfs_parent = NULL;
-	char dbfs_filename[8];
 	if (dbfs_parent == NULL) {
 		dbfs_parent = debugfs_create_dir("sata", NULL);
 	}
@@ -2139,7 +2204,17 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 			 "fail_%i", ap->print_id);
 		debugfs_create_file(dbfs_filename,
 			 S_IFREG|S_IRUGO|S_IWUGO,
-			 dbfs_parent, ap, &ahci_fops);
+			 dbfs_parent, ap, &ahci_fops_inject);
+		snprintf(dbfs_filename, sizeof(dbfs_filename) -1,
+			 "failfast_ops_%i", ap->print_id);
+		debugfs_create_file(dbfs_filename,
+			 S_IFREG|S_IRUGO|S_IWUGO,
+			 dbfs_parent, ap, &ahci_fops_failfast);
+		snprintf(dbfs_filename, sizeof(dbfs_filename) -1,
+			 "nonfailfast_ops_%i", ap->print_id);
+		debugfs_create_file(dbfs_filename,
+			 S_IFREG|S_IRUGO|S_IWUGO,
+			 dbfs_parent, ap, &ahci_fops_non_failfast);
 	}
 #endif
 

@@ -198,13 +198,13 @@ enum {
 	ATA_PFLAG_SUSPENDED	= (1 << 17), /* port is suspended (power) */
 	ATA_PFLAG_PM_PENDING	= (1 << 18), /* PM operation pending */
 	ATA_PFLAG_INIT_GTM_VALID = (1 << 19), /* initial gtm data valid */
-	ATA_PFLAG_FAULT_INJECT = (1 << 22), /* Enable for emulating a drive that
-					       doesn't respond */
 
 	ATA_PFLAG_PIO32		= (1 << 20),  /* 32bit PIO */
 	ATA_PFLAG_PIO32CHANGE	= (1 << 21),  /* 32bit PIO can be turned on/off */
 	ATA_PFLAG_EXTERNAL	= (1 << 22),  /* eSATA/external port */
 
+	ATA_PFLAG_FAULT_INJECT = (1 << 30), /* Enable for emulating a drive that
+					       doesn't respond */
 	/* struct ata_queued_cmd flags */
 	ATA_QCFLAG_ACTIVE	= (1 << 0), /* cmd not yet ack'd to scsi lyer */
 	ATA_QCFLAG_DMAMAP	= (1 << 1), /* SG table is DMA mapped */
@@ -882,6 +882,8 @@ struct ata_port {
 	u8			sector_buf[ATA_SECT_SIZE] ____cacheline_aligned;
 #ifdef CONFIG_SATA_FAULT_INJECT
 	unsigned int            faults_injected;
+	unsigned long		failfast_cnt;
+	unsigned long		non_failfast_cnt;
 #endif
 };
 
