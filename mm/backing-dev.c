@@ -88,7 +88,6 @@ static int suppress_b_dirty(struct inode *inode)
 			if (!page)
 				continue;
 			is_dirty |= PageDirty(page);
-			start = page->index + 1;
 			put_page(page);
 		}
 		if (is_dirty)
