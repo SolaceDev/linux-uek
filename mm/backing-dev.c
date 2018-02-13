@@ -80,7 +80,7 @@ static int suppress_b_dirty(struct inode *inode)
 	if (mapping_tagged(inode->i_mapping, PAGECACHE_TAG_DIRTY))
 		return 0;
 
-	while ((nr = find_get_pages(inode->i_mapping, start, 16, pages)) > 0) {
+	while ((nr = find_get_pages(inode->i_mapping, &start, 16, pages)) > 0) {
 		int is_dirty = 0;
 		unsigned i;
 		for (i = 0; i < nr; i++) {
