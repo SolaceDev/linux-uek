@@ -418,7 +418,7 @@ int __init_memblock boot_physmem_init(void)
 
 
 	// Align the memory to a full page so that we can make sure we can mmap it
-	base = memblock_find_in_range(PAGE_SIZE, 0x7fff0000, physmem_size, PAGE_SIZE);
+	base = memblock_find_in_range(PAGE_SIZE, (896UL << 20), physmem_size, PAGE_SIZE);
 	if (base == 0) {
 		FERROR("alloc_bootmem failed for size %u\n", (unsigned)size);
 		return -ENOMEM;
