@@ -418,11 +418,11 @@ int boot_physmem_init(void)
 		physmem_size += PAGE_SIZE - (physmem_size & (PAGE_SIZE-1));
 
 
-        // Align the memory to a full page so that we can make sure we can mmap it
-        base = memblock_find_in_range(0, 0x7fff0000, physmem_size, PAGE_SIZE);
+	// Align the memory to a full page so that we can make sure we can mmap it
+	base = memblock_find_in_range(PAGE_SIZE, (896UL << 20), physmem_size, PAGE_SIZE);
 	if (base == 0) {
-            FERROR("alloc_bootmem failed for size %u\n", (unsigned)size);
-                return -ENOMEM;
+		FERROR("alloc_bootmem failed for size %u\n", (unsigned)size);
+		return -ENOMEM;
 	}
 
 	dprintk(KERN_NOTICE "physmem: reserving 0x%08lx bytes at 0x%08Lx\n", 
@@ -443,8 +443,8 @@ int boot_physmem_init(void)
         physmemDevInfo.currAlloc_p = physmemDevInfo.physMem_p;
 
         // Register it as a resource
-        mem_resource.start = (unsigned long)physmemDevInfo.physMem_p;
-        mem_resource.end = mem_resource.start + size;
+        mem_resource.start = base;
+        mem_resource.end = mem_resource.start + physmem_size -1;
         rc = insert_resource(&iomem_resource, &mem_resource);
         if (rc < 0) {
             printk(KERN_ERR "Failed IOMEM resource request with result %d\n", 
