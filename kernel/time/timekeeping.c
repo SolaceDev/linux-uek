@@ -2438,8 +2438,8 @@ void do_timer(unsigned long ticks)
 			if (jiffies > last_log_jiffies + 2000) {
 				last_log_jiffies = jiffies_64;
 				printk(KERN_WARNING 
-					"Missed more than %li timer ticks,"
-					" total %li\n",
+					"Missed more than %lu timer ticks,"
+					" total %llu\n",
 					ticks, timer_skips);
                         }
 		}
