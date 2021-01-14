@@ -15,7 +15,6 @@
 #include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/bootmem.h>
 #include <linux/fs.h>
 #include <linux/types.h>
 #include <linux/mm.h>
@@ -347,11 +346,11 @@ static int physmem_procfs_open(struct inode *inode, struct file *file)
 	return single_open(file, physmem_procfs_show, NULL);
 }
 
-static struct file_operations physmem_procfs_read_fops = {
-	.open		= physmem_procfs_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= seq_release,
+static const struct proc_ops physmem_procfs_read_fops = {
+	.proc_open		= physmem_procfs_open,
+	.proc_read		= seq_read,
+	.proc_lseek		= seq_lseek,
+	.proc_release	        = seq_release,
 };
 #endif
 
