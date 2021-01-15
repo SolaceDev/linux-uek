@@ -393,7 +393,7 @@ int __init physmem_setup(char *str)
 
 early_param("physmem", physmem_setup);
 
-int boot_physmem_init(void)
+int __init_memblock boot_physmem_init(void)
 {
 	unsigned long long base;
 	unsigned size = physmem_size;
