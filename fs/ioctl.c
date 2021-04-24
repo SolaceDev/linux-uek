@@ -326,13 +326,6 @@ static int file_ioctl(struct file *filp, unsigned int cmd, int __user *p)
 	switch (cmd) {
 	case FIBMAP:
 		return ioctl_fibmap(filp, p);
-	case FIONREAD:
-		return put_user(i_size_read(inode) - filp->f_pos, p);
-	case FIGETRESBYTES64:
-		if (!inode->i_mapping)
-			return -EINVAL;
-		return put_user((u64)inode->i_mapping->nrpages * PAGE_SIZE,
-				(u64 __user *)arg);
 	case FS_IOC_RESVSP:
 	case FS_IOC_RESVSP64:
 		return ioctl_preallocate(filp, 0, p);

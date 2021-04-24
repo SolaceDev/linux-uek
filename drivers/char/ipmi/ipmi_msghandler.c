@@ -5194,6 +5194,8 @@ void ipmi_free_recv_msg(struct ipmi_recv_msg *msg)
 }
 EXPORT_SYMBOL(ipmi_free_recv_msg);
 
+#ifdef CONFIG_IPMI_PANIC_EVENT
+
 static atomic_t panic_done_count = ATOMIC_INIT(0);
 
 static void dummy_smi_done_handler(struct ipmi_smi_msg *msg)
@@ -5209,7 +5211,7 @@ static void dummy_recv_done_handler(struct ipmi_recv_msg *msg)
 /*
  * Inside a panic, send a message.
  */
-static void ipmi_panic_request(ipmi_smi_t           intf,
+static void ipmi_panic_request(struct ipmi_smi      *intf,
 			       struct ipmi_addr     *addr,
 			       struct kernel_ipmi_msg *msg,
 			       struct ipmi_recv_msg *recv_msg,
@@ -5271,7 +5273,7 @@ static void ipmi_panic_request_and_wait(struct ipmi_smi *intf,
  */
 static void ipmi_powercycle_chassis (void)
 {
-	ipmi_smi_t                        intf;
+	struct ipmi_smi                   *intf;
 	struct kernel_ipmi_msg            send_msg;
 	unsigned char                     data[1];
 	struct ipmi_system_interface_addr *si;
@@ -5370,7 +5372,7 @@ struct sel_info
 typedef struct sel_info sel_info_t;
 
 /* This is to be used with ipmi_kmsg_dump */
-int get_sel_info(ipmi_smi_t intf, struct ipmi_addr *addr, 
+int get_sel_info(struct ipmi_smi *intf, struct ipmi_addr *addr, 
 		struct ipmi_recv_msg *recv_msg,
 		sel_info_t *sel_info)
 {
@@ -5396,7 +5398,7 @@ int get_sel_info(ipmi_smi_t intf, struct ipmi_addr *addr,
 }
 
 /* This is to be used with ipmi_kmsg_dump */
-unsigned int get_alloc_unit_size(ipmi_smi_t intf, struct ipmi_addr *addr,
+unsigned int get_alloc_unit_size(struct ipmi_smi *intf, struct ipmi_addr *addr,
 				struct ipmi_recv_msg *recv_msg)
 {
 	unsigned int		alloc_unit_size = 16;
@@ -5426,7 +5428,7 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 {
 	unsigned long panic_log_length;
 	struct kernel_ipmi_msg            msg;
-	ipmi_smi_t                        intf;
+	struct ipmi_smi                   *intf;
 	unsigned char                     data[16];
 	struct ipmi_system_interface_addr *si;
 	struct ipmi_addr                  addr;
@@ -5524,7 +5526,7 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 		   be zero, and it must not be my address. */
 		if (((intf->event_receiver & 1) == 0)
 		    && (intf->event_receiver != 0)
-		    && (intf->event_receiver != intf->channels[0].address))
+	            && (intf->event_receiver != intf->addrinfo[0].address))
 		{
 			/* The event receiver is valid, send an IPMB
 			   message. */
@@ -5705,7 +5707,7 @@ static void send_panic_events(struct ipmi_smi *intf, char *str)
 	msg.data = NULL;
 	msg.data_len = 0;
 	intf->null_user_handler = device_id_fetcher;
-	ipmi_panic_request_and_wait(intf, &addr, &msg);
+	ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
 
 	if (intf->local_event_generator) {
 		/* Request the event receiver from the local MC. */
@@ -5768,7 +5770,9 @@ static void send_panic_events(struct ipmi_smi *intf, char *str)
 
 		ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
 	}
+#endif /* CONFIG_IPMI_PANIC_STRING */
 }
+#endif /* CONFIG_IPMI_PANIC_EVENT */
 
 static int has_panicked;
 
@@ -5908,10 +5912,10 @@ static int __init ipmi_init_msghandler_mod(void)
 	memset(panic_buf, 0x00, PANIC_BUF_SIZE);
 	dump.dump = ipmi_kmsg_dump;
 	dump.registered = 0;
-	err = kmsg_dump_register(&dump);
-	if (err) {
+	rv = kmsg_dump_register(&dump);
+	if (rv) {
 		printk(KERN_ERR "ipmi_msghandler: registering kmsg dumper "
-				"failed, error %d\n", err);
+				"failed, error %d\n", rv);
 	} else {
 		printk(KERN_INFO "ipmi_msghandler:  registered kmsg dumper");
 	}

@@ -309,7 +309,7 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 			     reason, smp_processor_id());
 
 	show_state_filter_less_stack(TASK_RUNNING, TASK_RUNNING|TASK_UNINTERRUPTIBLE|__TASK_STOPPED|__TASK_TRACED);
-	show_mem(0);
+	show_mem(0,NULL);
 
 	if (unknown_nmi_panic || panic_on_unrecovered_nmi)
 		nmi_panic(regs, "NMI: Not continuing");

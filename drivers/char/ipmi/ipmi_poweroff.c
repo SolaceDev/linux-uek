@@ -27,6 +27,8 @@
 #include <linux/workqueue.h>
 #include <linux/delay.h>
 
+#define PFX "IPMI poweroff: "
+
 static void ipmi_po_smi_gone(int if_num);
 static void ipmi_po_new_smi(int if_num, struct device *device);
 
@@ -52,6 +54,16 @@ static void (*specific_poweroff_func)(struct ipmi_user *user);
 
 /* Holds the old poweroff function so we can restore it on removal. */
 static void (*old_poweroff_func)(void);
+
+static void ipmi_po_new_smi_work(struct work_struct *work);
+
+/* power off init work queue */
+static struct workqueue_struct *init_wq;
+
+typedef struct {
+        struct work_struct init_work;
+        int if_num;
+} init_work_t;
 
 static int set_param_ifnum(const char *val, const struct kernel_param *kp)
 {
@@ -614,7 +626,7 @@ static void ipmi_po_new_smi_work(struct work_struct *work)
 	struct kernel_ipmi_msg            send_msg;
 	int                               rv;
 	int                               i;
-	init_work_t *queued_work = (init_work_t*)work;
+	init_work_t *queued_work = (init_work_t *)work;
 
 	int if_num = queued_work->if_num;
 

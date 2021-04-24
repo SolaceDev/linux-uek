@@ -303,11 +303,6 @@ extern void show_state_filter(unsigned long state_filter);
 extern void show_state_filter_less_stack(unsigned long state_filter,
 					 unsigned long stack_state_filter);
 
-static inline void show_state(void)
-{
-	show_state_filter(0);
-}
-
 extern void show_regs(struct pt_regs *);
 
 #define get_current_state()	READ_ONCE(current->__state)
