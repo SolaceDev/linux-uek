@@ -1,13 +1,16 @@
 #!/bin/sh
+#DEVSERVERS=$(/opt/soldev/devtools/bin/reachable-dev-servers |tr "\n" " ")
+#DISTCC_HOSTS=--randomize $(DEVSERVERS// /,cpp,lzo )
 
-export PATH=/opt/soldev/toolchains/centos7-v7/targets/centos7-x86_64/bin:$PATH
+COMPILER_PATH=${COMPILER_PATH:-"/opt/soldev/toolchains/centos7-v7/targets/centos7-x86_64/bin"}
+PATH=${COMPILER_PATH}:$PATH
 
 VERSION=`make ARCH=x86_64 kernelversion`
 VERSION_PATCH=${VERSION%\.*}
 LOAD_DIR=/home/public/RND/loads/linux/${VERSION_PATCH}
 
 STDIN_RUN_ON_BUILDHOST="xargs -0 bash -c"
-#export CROSS_COMPILE=x86_64-target-linux-gnu-
+#export CROSS_COMPILE=distcc 
 
 DEBUG_SET=(
     "CONFIG_DEBUG_FS"
@@ -184,6 +187,7 @@ if [ -n "$BUILD_NUMBER" ] ; then
 		echo "Creation of $LOAD_DIR/$NEW_VERSION/kernel-$NEW_VERSION-src.tar.gz failed!"
 		exit 1
 	fi
+	touch $LOAD_DIR/$NEW_VERSION/.keepme
 	echo "Changing directory back to $OLD_PWD"
 	cd "$OLD_PWD" || exit 1
 	echo Done!
