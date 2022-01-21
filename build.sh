@@ -86,20 +86,6 @@ function clean_build
 	make -C "$NEW_DIR" ARCH=x86_64 clean
 }
 
-function build_perf_rpm
-{
-	# build perf rpm package
-	echo "Building perf rpm package."
-	pushd tools
-	make perf-rpm
-	RC=$?
-	if [ $RC -ne 0 ]; then
-		exit $RC
-	fi
-	cp -diR "perf-rpm/RPMS" "$LOAD_DIR/$NEW_VERSION/"
-	popd
-}
-
 function findLatestBuild
 {
 	LAST_ID=0
@@ -173,6 +159,8 @@ if [ -n "$BUILD_NUMBER" ] ; then
 	cp -f "$OLD_PWD/.config" "$LOAD_DIR/$NEW_VERSION" || exit 1
 	make -C "$LOAD_DIR/$NEW_VERSION" ARCH=x86_64 $@
 	RC=$?
+        echo "Build perf"
+        make -C tools/perf 
 else
         if [ -n "$DEBUG" ]; then
             prep_debug_build "" "."
