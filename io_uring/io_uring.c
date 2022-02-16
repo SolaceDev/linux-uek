@@ -2501,6 +2501,8 @@ static int io_cqring_wait(struct io_ring_ctx *ctx, int min_events,
 		finish_wait(&ctx->cq_wait, &iowq.wq);
 	restore_saved_sigmask_unless(ret == -EINTR);
 
+	trace_io_uring_cqring_wait_done(ctx);	
+
 	return READ_ONCE(rings->cq.head) == READ_ONCE(rings->cq.tail) ? ret : 0;
 }
 
