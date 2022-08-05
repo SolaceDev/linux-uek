@@ -5194,8 +5194,6 @@ void ipmi_free_recv_msg(struct ipmi_recv_msg *msg)
 }
 EXPORT_SYMBOL(ipmi_free_recv_msg);
 
-#ifdef CONFIG_IPMI_PANIC_EVENT
-
 static atomic_t panic_done_count = ATOMIC_INIT(0);
 
 static void dummy_smi_done_handler(struct ipmi_smi_msg *msg)
@@ -5241,7 +5239,6 @@ static void ipmi_panic_request(struct ipmi_smi      *intf,
 			    retries, 1); /* Don't retry, and don't wait. */
 	if (rv)
 		atomic_sub(2, &panic_done_count);
-
 	else if (intf->handlers->flush_messages)
 		intf->handlers->flush_messages(intf->send_info);
 
@@ -5266,6 +5263,7 @@ static void ipmi_panic_request_and_wait(struct ipmi_smi *intf,
 #define IPMI_CHASSIS_POWER_CYCLE       0x02    /* power cycle */
 
 
+#ifdef CONFIG_IPMI_PANIC_KMSG_DUMP
 /*
  * This is a stripped down(no poweroff) version of
  * ipmi_poweroff_chassis from ipmi_poweroff.c that is safe to
@@ -5326,8 +5324,8 @@ static void ipmi_powercycle_chassis (void)
 		}
 	}
 }
+#endif // CONFIG_IPMI_PANIC_KMSG_DUMP
 
-#ifdef CONFIG_IPMI_PANIC_STRING
 static void event_receiver_fetcher(struct ipmi_smi *intf,
 				   struct ipmi_recv_msg *msg)
 {
@@ -5507,7 +5505,7 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 		msg.data_len = 0;
 		intf->null_user_handler = device_id_fetcher;
 
-		ipmi_panic_request_and_wait(intf, &addr, &msg, &recv_msg, 0);
+		ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
 
 		if (intf->local_event_generator) {
 			/* Request the event receiver from the local MC. */
@@ -5517,7 +5515,7 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 			msg.data_len = 0;
 			intf->null_user_handler = event_receiver_fetcher;
 
-			ipmi_panic_request_and_wait(intf, &addr, &msg, &recv_msg, 0);
+			ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
 		}
 		intf->null_user_handler = NULL;
 
@@ -5545,7 +5543,6 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 			si->lun = 0;
 		} else
 			continue; /* No where to send the event. */
-
 
 		if (get_sel_info(intf, &addr, &recv_msg, &sel_info) == 0)
 		{
@@ -5662,16 +5659,8 @@ static void send_panic_events(struct ipmi_smi *intf, char *str)
 		data[7] = str[2];
 	}
 
-	/* For every registered interface, send the event. */
-	list_for_each_entry_rcu(intf, &ipmi_interfaces, link) {
-		if (!intf->handlers)
-			/* Interface is not ready. */
-			continue;
-
-		/* Send the event announcing the panic. */
-		intf->handlers->set_run_to_completion(intf->send_info, 1);
-		ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
-	}
+	/* Send the event announcing the panic. */
+	ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
 
 	/*
 	 * On every interface, dump a bunch of OEM event holding the
@@ -5770,9 +5759,7 @@ static void send_panic_events(struct ipmi_smi *intf, char *str)
 
 		ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
 	}
-#endif /* CONFIG_IPMI_PANIC_STRING */
 }
-#endif /* CONFIG_IPMI_PANIC_EVENT */
 
 static int has_panicked;
 
