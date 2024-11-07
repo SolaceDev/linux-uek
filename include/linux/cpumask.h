@@ -1220,7 +1220,8 @@ static inline ssize_t
 cpumap_print_to_pagebuf_32bit(bool list, char *buf, const struct cpumask *mask)
 {
 	return bitmap_print_to_pagebuf(list, buf, cpumask_bits(mask),
-				      min(nr_cpu_ids,32U));
+				       (*cpumask_bits(mask) > 31U) ? nr_cpu_ids: 
+                                        min(nr_cpu_ids,32U));
 }
 
 /**
