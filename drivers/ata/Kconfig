@@ -317,6 +317,14 @@ config SATA_ACARD_AHCI
 
 	  If unsure, say N.
 
+config SATA_FAULT_INJECT
+        bool "SATA AHCI FAULT INJECTION support"
+        depends on SATA_AHCI && DEBUG_FS
+        help
+          Enable Suport for SATA AHCI FAULT INJECTION
+
+          If unsure, say N.
+
 config SATA_SIL24
 	tristate "Silicon Image 3124/3132 SATA support"
 	depends on PCI

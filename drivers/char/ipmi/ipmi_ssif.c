@@ -1634,8 +1634,10 @@ static int ssif_check_and_remove(struct i2c_client *client,
 {
 	struct ssif_addr_info *info;
 
+	if (!client || !client->adapter || !client->adapter->name)
+		return 0;
 	list_for_each_entry(info, &ssif_infos, link) {
-		if (!info->client)
+		if (!info->client || !info->adapter_name)
 			return 0;
 		if (!strcmp(info->adapter_name, client->adapter->name) &&
 		    info->binfo.addr == client->addr) {

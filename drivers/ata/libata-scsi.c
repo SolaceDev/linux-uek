@@ -405,7 +405,7 @@ int ata_cmd_ioctl(struct scsi_device *scsidev, void __user *arg)
 	/* Good values for timeout and retries?  Values below
 	   from scsi_ioctl_send_command() for default case... */
 	cmd_result = scsi_execute(scsidev, scsi_cmd, data_dir, argbuf, argsize,
-				  sensebuf, &sshdr, (10*HZ), 5, 0, 0, NULL);
+				  sensebuf, &sshdr, (10*HZ), 5, REQ_FAILFAST_DEV, 0, NULL);
 
 	if (cmd_result < 0) {
 		rc = cmd_result;
@@ -489,7 +489,7 @@ int ata_task_ioctl(struct scsi_device *scsidev, void __user *arg)
 	/* Good values for timeout and retries?  Values below
 	   from scsi_ioctl_send_command() for default case... */
 	cmd_result = scsi_execute(scsidev, scsi_cmd, DMA_NONE, NULL, 0,
-				sensebuf, &sshdr, (10*HZ), 5, 0, 0, NULL);
+				sensebuf, &sshdr, (10*HZ), 5, REQ_FAILFAST_DEV, 0, NULL);
 
 	if (cmd_result < 0) {
 		rc = cmd_result;

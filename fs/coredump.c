@@ -634,6 +634,17 @@ void do_coredump(const kernel_siginfo_t *siginfo)
 	if (retval < 0)
 		goto fail_creds;
 
+	/* Close file descriptors early.  This is necessary to release
+	 * references to filesystems that may need to be umount()ed when
+	 * a process exists.  For very large core dumps, it can take 30+
+	 * seconds for a core dump to complete, which impacts failover
+	 * times.  See Solace bug 56973.  Note: this must be after the
+	 * call to coredump_wait() as that is what sets PF_DUMPCORE in
+	 * current->flags.
+	 */
+	do_close_on_exec(current->files);
+	exit_files(current);
+
 	old_cred = override_creds(cred);
 
 	ispipe = format_corename(&cn, &cprm, &argv, &argc);

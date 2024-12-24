@@ -9923,6 +9923,7 @@ void md_autodetect_dev(dev_t dev)
 
 	node_detected_dev = kzalloc(sizeof(*node_detected_dev), GFP_KERNEL);
 	if (node_detected_dev) {
+		printk(KERN_WARNING "Raid auto detect on dev(%d,%d)\n", MAJOR(dev), MINOR(dev));
 		node_detected_dev->dev = dev;
 		mutex_lock(&detected_devices_mutex);
 		list_add_tail(&node_detected_dev->list, &all_detected_devices);

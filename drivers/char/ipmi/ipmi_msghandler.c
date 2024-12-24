@@ -36,8 +36,27 @@
 #include <linux/nospec.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
+#include <linux/kmsg_dump.h>
+#include <linux/nmi.h>
 
 #define IPMI_DRIVER_VERSION "39.2"
+
+extern int panic_timeout;
+
+#ifdef CONFIG_NMI_PANIC_NOW
+extern uint64_t panic_now;
+#endif
+
+#ifdef CONFIG_IPMI_PANIC_KMSG_DUMP
+#ifdef DEBUG_KMD
+#define DPRINT_KMD(args...) printk(KERN_ERR args)
+#else
+#define DPRINT_KMD(...)
+#endif
+static struct kmsg_dumper dump;
+#define PANIC_BUF_SIZE 65484
+static void* panic_buf;
+#endif /*CONFIG_IPMI_PANIC_KMSG_DUMP*/
 
 static struct ipmi_recv_msg *ipmi_alloc_recv_msg(void);
 static int ipmi_init_msghandler(void);
@@ -4857,18 +4876,23 @@ static void dummy_recv_done_handler(struct ipmi_recv_msg *msg)
 }
 
 /*
- * Inside a panic, send a message and wait for a response.
+ * Inside a panic, send a message.
  */
-static void ipmi_panic_request_and_wait(struct ipmi_smi *intf,
-					struct ipmi_addr *addr,
-					struct kernel_ipmi_msg *msg)
+static void ipmi_panic_request(struct ipmi_smi      *intf,
+			       struct ipmi_addr     *addr,
+			       struct kernel_ipmi_msg *msg,
+			       struct ipmi_recv_msg *recv_msg,
+			       unsigned int retries)
 {
 	struct ipmi_smi_msg  smi_msg;
-	struct ipmi_recv_msg recv_msg;
+	struct ipmi_recv_msg local_recv_msg;
 	int rv;
 
+	if (!recv_msg)
+		recv_msg = &local_recv_msg;
+
 	smi_msg.done = dummy_smi_done_handler;
-	recv_msg.done = dummy_recv_done_handler;
+	recv_msg->done = dummy_recv_done_handler;
 	atomic_add(2, &panic_done_count);
 	rv = i_ipmi_request(NULL,
 			    intf,
@@ -4877,19 +4901,99 @@ static void ipmi_panic_request_and_wait(struct ipmi_smi *intf,
 			    msg,
 			    intf,
 			    &smi_msg,
-			    &recv_msg,
+			    recv_msg,
 			    0,
 			    intf->addrinfo[0].address,
 			    intf->addrinfo[0].lun,
-			    0, 1); /* Don't retry, and don't wait. */
+			    retries, 1); /* Don't retry, and don't wait. */
 	if (rv)
 		atomic_sub(2, &panic_done_count);
 	else if (intf->handlers->flush_messages)
 		intf->handlers->flush_messages(intf->send_info);
 
+}
+
+/*
+ * Inside a panic, send a message and wait for a response.
+ */
+static void ipmi_panic_request_and_wait(struct ipmi_smi *intf,
+					struct ipmi_addr *addr,
+					struct kernel_ipmi_msg *msg,
+					struct ipmi_recv_msg *recv_msg,
+					unsigned int retries)
+{
+	ipmi_panic_request(intf, addr, msg, recv_msg, retries);
 	while (atomic_read(&panic_done_count) != 0)
 		ipmi_poll(intf);
 }
+
+#define IPMI_NETFN_CHASSIS_REQUEST     0
+#define IPMI_CHASSIS_CONTROL_CMD       0x02
+#define IPMI_CHASSIS_POWER_CYCLE       0x02    /* power cycle */
+
+
+#ifdef CONFIG_IPMI_PANIC_KMSG_DUMP
+/*
+ * This is a stripped down(no poweroff) version of
+ * ipmi_poweroff_chassis from ipmi_poweroff.c that is safe to
+ * run in panicied state.
+ */
+static void ipmi_powercycle_chassis (void)
+{
+	struct ipmi_smi                   *intf;
+	struct kernel_ipmi_msg            send_msg;
+	unsigned char                     data[1];
+	struct ipmi_system_interface_addr *si;
+	struct ipmi_addr                  addr;
+
+	/*
+	 * Configure IPMI address for local access
+	 */
+	si = (struct ipmi_system_interface_addr *) &addr;
+	si->addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
+	si->channel = IPMI_BMC_CHANNEL;
+	si->lun = 0;
+
+	printk(KERN_EMERG "Powercycle via IPMI chassis control command\n");
+
+	/*
+	* Power down
+	*/
+	send_msg.netfn = IPMI_NETFN_CHASSIS_REQUEST;
+	send_msg.cmd = IPMI_CHASSIS_CONTROL_CMD;
+	data[0] = IPMI_CHASSIS_POWER_CYCLE;
+	send_msg.data = data;
+	send_msg.data_len = sizeof(data);
+
+	/* For every registered interface, send the event. */
+	list_for_each_entry_rcu(intf, &ipmi_interfaces, link) {
+		struct ipmi_recv_msg halt_recv_msg;
+
+		if (!intf->handlers)
+		{
+			printk(KERN_WARNING "IPMI Interface is not ready\n");
+			/* Interface is not ready. */
+			continue;
+		}
+		intf->run_to_completion = 1;
+		intf->handlers->set_run_to_completion(intf->send_info, 1);
+		intf->null_user_handler = NULL;
+
+		ipmi_panic_request_and_wait(intf, &addr, &send_msg,
+					    &halt_recv_msg, 4);
+
+		if (halt_recv_msg.msg_data[0] != 0)
+		{
+			printk(KERN_WARNING "IPMI command error 0x%02X\n",
+			halt_recv_msg.msg_data[0]);
+		}
+		else
+		{
+			printk(KERN_INFO "IPMI command successfull\n");
+		}
+	}
+}
+#endif // CONFIG_IPMI_PANIC_KMSG_DUMP
 
 static void event_receiver_fetcher(struct ipmi_smi *intf,
 				   struct ipmi_recv_msg *msg)
@@ -4918,6 +5022,272 @@ static void device_id_fetcher(struct ipmi_smi *intf, struct ipmi_recv_msg *msg)
 		intf->local_event_generator = (msg->msg.data[6] >> 5) & 1;
 	}
 }
+
+#ifdef CONFIG_IPMI_PANIC_KMSG_DUMP
+struct sel_info
+{
+	unsigned char completion_code;
+	unsigned char version;
+	/* Note LS byte first */
+	unsigned char entries[2];
+	unsigned char free[2];
+	unsigned char ts_add[4];  
+	unsigned char ts_del[4];  
+	unsigned char support;
+};
+
+typedef struct sel_info sel_info_t;
+
+/* This is to be used with ipmi_kmsg_dump */
+int get_sel_info(struct ipmi_smi *intf, struct ipmi_addr *addr, 
+		struct ipmi_recv_msg *recv_msg,
+		sel_info_t *sel_info)
+{
+	struct kernel_ipmi_msg msg;
+	int rc = -1;
+
+	//Find out how much space is avaliable
+	/* Request the device info from the local MC. */
+	msg.netfn = IPMI_NETFN_STORAGE_REQUEST;
+	msg.cmd = 0x40; //IPMI_GET_SEL_INFO
+	msg.data = NULL;
+	msg.data_len = 0;
+	intf->null_user_handler = NULL;
+
+	ipmi_panic_request_and_wait(intf, addr, &msg, recv_msg, 0);
+
+	if (recv_msg->msg_data[0] != 0x81) /* Ensure erase is not in progress */
+	{
+		memcpy((void *)sel_info, recv_msg->msg_data, 15);
+		rc = 0;
+	}
+	return rc;
+}
+
+/* This is to be used with ipmi_kmsg_dump */
+unsigned int get_alloc_unit_size(struct ipmi_smi *intf, struct ipmi_addr *addr,
+				struct ipmi_recv_msg *recv_msg)
+{
+	unsigned int		alloc_unit_size = 16;
+	struct kernel_ipmi_msg	msg;
+
+	//Find out record size avaliable
+	/* Request the device info from the local MC. */
+	msg.netfn = IPMI_NETFN_STORAGE_REQUEST;
+	msg.cmd = 0x41; //IPMI_GET_Allocation_Info
+	msg.data = NULL;
+	msg.data_len = 0;
+	intf->null_user_handler = NULL;
+
+	ipmi_panic_request_and_wait(intf, addr, &msg, recv_msg, 0);
+
+	if (recv_msg->msg_data[0] != 0x81) /* Ensure erase is not in progress */
+	{
+		alloc_unit_size = (recv_msg->msg_data[4] << 8) | 
+					recv_msg->msg_data[3];
+	}
+	return alloc_unit_size;
+}
+
+
+static void ipmi_kmsg_dump(struct kmsg_dumper *dumper, 
+			   enum kmsg_dump_reason reason)
+{
+	unsigned long panic_log_length;
+	struct kernel_ipmi_msg            msg;
+	struct ipmi_smi                   *intf;
+	unsigned char                     data[16];
+	struct ipmi_system_interface_addr *si;
+	struct ipmi_addr                  addr;
+	struct ipmi_recv_msg              recv_msg;
+
+	unsigned long sel_avail_space = 1024;
+
+#ifdef CONFIG_NMI_PANIC_NOW
+	/* Skip if panic_now is set */
+	if (unlikely(panic_now)) {
+		ipmi_powercycle_chassis();
+		udelay(10000);
+		return;
+	}
+#endif
+
+	if (reason == KMSG_DUMP_EMERG) {
+		ipmi_powercycle_chassis();
+		udelay(1000);
+		return;
+	} else if (reason > KMSG_DUMP_OOPS) {
+		return;
+	}
+
+	si = (struct ipmi_system_interface_addr *) &addr;
+	si->addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
+	si->channel = IPMI_BMC_CHANNEL;
+	si->lun = 0;
+
+	recv_msg.done = dummy_recv_done_handler;
+
+	/* On every interface, dump a bunch of OEM events holding the
+	   string. */
+
+	/* For every registered interface, send the event. */
+	list_for_each_entry_rcu(intf, &ipmi_interfaces, link) {
+		struct ipmi_ipmb_addr *ipmb;
+		unsigned long bytes_left = 0;
+		/* OEM log format is 16 bytes - 3 for the header */
+		const unsigned long write_size = 13;
+		const unsigned char header_size = 3;
+		unsigned long alloc_unit_size = 16; 
+		const unsigned int min_free_rec = 10;
+		sel_info_t sel_info;
+
+		if (intf->intf_num == -1)
+			/* Interface was not ready yet. */
+			continue;
+
+		intf->run_to_completion = 1;
+		intf->handlers->set_run_to_completion(intf->send_info, 1);
+
+		/*
+		 * intf_num is used as an marker to tell if the
+		 * interface is valid.  Thus we need a read barrier to
+		 * make sure data fetched before checking intf_num
+		 * won't be used.
+		 */
+		smp_rmb();
+
+		/* First job here is to figure out where to send the
+		   OEM events.  There's no way in IPMI to send OEM
+		   events using an event send command, so we have to
+		   find the SEL to put them in and stick them in
+		   there. */
+
+		/* Get capabilities from the get device id. */
+		intf->local_sel_device = 0;
+		intf->local_event_generator = 0;
+		intf->event_receiver = 0;
+
+		/* Request the device info from the local MC. */
+		msg.netfn = IPMI_NETFN_APP_REQUEST;
+		msg.cmd = IPMI_GET_DEVICE_ID_CMD;
+		msg.data = NULL;
+		msg.data_len = 0;
+		intf->null_user_handler = device_id_fetcher;
+
+		ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
+
+		if (intf->local_event_generator) {
+			/* Request the event receiver from the local MC. */
+			msg.netfn = IPMI_NETFN_SENSOR_EVENT_REQUEST;
+			msg.cmd = IPMI_GET_EVENT_RECEIVER_CMD;
+			msg.data = NULL;
+			msg.data_len = 0;
+			intf->null_user_handler = event_receiver_fetcher;
+
+			ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
+		}
+		intf->null_user_handler = NULL;
+
+		/* Validate the event receiver.  The low bit must not
+		   be 1 (it must be a valid IPMB address), it cannot
+		   be zero, and it must not be my address. */
+		if (((intf->event_receiver & 1) == 0)
+		    && (intf->event_receiver != 0)
+	            && (intf->event_receiver != intf->addrinfo[0].address))
+		{
+			/* The event receiver is valid, send an IPMB
+			   message. */
+			ipmb = (struct ipmi_ipmb_addr *) &addr;
+			ipmb->addr_type = IPMI_IPMB_ADDR_TYPE;
+			ipmb->channel = 0; /* FIXME - is this right? */
+			ipmb->lun = intf->event_receiver_lun;
+			ipmb->slave_addr = intf->event_receiver;
+		} else if (intf->local_sel_device) {
+			/* The event receiver was not valid (or was
+			   me), but I am an SEL device, just dump it
+			   in my SEL. */
+			si = (struct ipmi_system_interface_addr *) &addr;
+			si->addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
+			si->channel = IPMI_BMC_CHANNEL;
+			si->lun = 0;
+		} else
+			continue; /* No where to send the event. */
+
+		if (get_sel_info(intf, &addr, &recv_msg, &sel_info) == 0)
+		{
+			sel_avail_space = (sel_info.free[1] << 8) | 
+					  sel_info.free[0];
+			if (sel_info.support & 0x1)
+			{
+				alloc_unit_size = get_alloc_unit_size(intf, 
+								&addr,
+								&recv_msg);
+			}
+			if (sel_avail_space <= (alloc_unit_size*min_free_rec))
+				sel_avail_space = 0;
+			else
+				sel_avail_space-=alloc_unit_size*min_free_rec;
+		}
+
+		DPRINT_KMD("sel_avail_space=%li, alloc_unit_size=%li," 
+				" write_size=%li\n",
+				sel_avail_space, alloc_unit_size, write_size);
+
+		sel_avail_space = (sel_avail_space / alloc_unit_size) * 
+				  write_size;
+
+		// If in a NMI there may be less time to write logs
+		if (in_nmi()) sel_avail_space = min(sel_avail_space,2250UL * write_size);
+
+		kmsg_dump_get_buffer(dumper, false, panic_buf, 
+				     min((unsigned long)PANIC_BUF_SIZE,
+				     sel_avail_space), 
+				     &panic_log_length);
+
+		bytes_left = min(panic_log_length, sel_avail_space);
+
+		msg.netfn = IPMI_NETFN_STORAGE_REQUEST; /* Storage. */
+		msg.cmd = IPMI_ADD_SEL_ENTRY_CMD;
+		msg.data = data;
+		msg.data_len = write_size + header_size;
+
+		data[0] = 0;
+		data[1] = 0;
+		data[2] = 0xf2; /* OEM event without timestamp. */
+
+		while (bytes_left) {
+			unsigned long size = min(bytes_left,write_size);
+
+			bytes_left -= size; 
+			/* Zero bytes if will not use full buffer */
+			if (size < write_size) {
+				memset(data+header_size+size, 0, write_size-size);
+			}
+
+			/* Always give allocation_unit_size bytes, 
+			   so strncpy will fill it with zeroes. */
+			strncpy(data+header_size, panic_buf, size);
+			panic_buf += size;
+
+			DPRINT_KMD("panic_buf %p, bytes_left=%li",
+				   panic_buf, bytes_left); 
+			ipmi_panic_request(intf, &addr,
+					   &msg, &recv_msg, 0);
+			touch_nmi_watchdog();
+			if (atomic_read(&panic_done_count) != 0)
+				ipmi_poll(intf);
+		}
+		while (atomic_read(&panic_done_count) != 0)
+			ipmi_poll(intf);
+		touch_nmi_watchdog();
+	}
+	if (in_nmi()) {
+		ipmi_powercycle_chassis(); 
+		udelay(10000);
+	}
+
+}
+#endif /*CONFIG_IPMI_PANIC_KMSG_DUMP*/
 
 static void send_panic_events(struct ipmi_smi *intf, char *str)
 {
@@ -4959,7 +5329,7 @@ static void send_panic_events(struct ipmi_smi *intf, char *str)
 	}
 
 	/* Send the event announcing the panic. */
-	ipmi_panic_request_and_wait(intf, &addr, &msg);
+	ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
 
 	/*
 	 * On every interface, dump a bunch of OEM event holding the
@@ -4995,7 +5365,7 @@ static void send_panic_events(struct ipmi_smi *intf, char *str)
 	msg.data = NULL;
 	msg.data_len = 0;
 	intf->null_user_handler = device_id_fetcher;
-	ipmi_panic_request_and_wait(intf, &addr, &msg);
+	ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
 
 	if (intf->local_event_generator) {
 		/* Request the event receiver from the local MC. */
@@ -5004,7 +5374,7 @@ static void send_panic_events(struct ipmi_smi *intf, char *str)
 		msg.data = NULL;
 		msg.data_len = 0;
 		intf->null_user_handler = event_receiver_fetcher;
-		ipmi_panic_request_and_wait(intf, &addr, &msg);
+		ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
 	}
 	intf->null_user_handler = NULL;
 
@@ -5061,7 +5431,7 @@ static void send_panic_events(struct ipmi_smi *intf, char *str)
 		strncpy(data+5, p, 11);
 		p += size;
 
-		ipmi_panic_request_and_wait(intf, &addr, &msg);
+		ipmi_panic_request_and_wait(intf, &addr, &msg, NULL, 0);
 	}
 }
 
@@ -5190,23 +5560,54 @@ static int __init ipmi_init_msghandler_mod(void)
 	rv = ipmi_register_driver();
 	mutex_unlock(&ipmi_interfaces_mutex);
 
+	if (rv) {
+		return rv;
+        }
+
+#ifdef CONFIG_IPMI_PANIC_KMSG_DUMP
+	panic_buf = kmalloc(PANIC_BUF_SIZE, GFP_KERNEL);
+	if (!panic_buf) {
+		printk(KERN_ERR "ipmi_msghandler: failed to allocate panic buf buffer\n");
+		return -ENOMEM;
+	}
+	memset(panic_buf, 0x00, PANIC_BUF_SIZE);
+	dump.dump = ipmi_kmsg_dump;
+	dump.registered = 0;
+	rv = kmsg_dump_register(&dump);
+	if (rv) {
+		printk(KERN_ERR "ipmi_msghandler: registering kmsg dumper "
+				"failed, error %d\n", rv);
+	} else {
+		printk(KERN_INFO "ipmi_msghandler:  registered kmsg dumper");
+	}
+#endif /*CONFIG_IPMI_PANIC_KMSG_DUMP*/
 	return rv;
 }
 
 static void __exit cleanup_ipmi(void)
 {
 	int count;
+#ifdef CONFIG_IPMI_PANIC_KMSG_DUMP
+	int err;
+#endif /*CONFIG_IPMI_PANIC_KMSG_DUMP*/
 
 	if (initialized) {
 		destroy_workqueue(remove_work_wq);
-
-		atomic_notifier_chain_unregister(&panic_notifier_list,
-						 &panic_block);
 
 		/*
 		 * This can't be called if any interfaces exist, so no worry
 		 * about shutting down the interfaces.
 		 */
+#ifdef CONFIG_IPMI_PANIC_KMSG_DUMP
+		err = kmsg_dump_unregister(&dump);
+		if (err) {
+			printk(KERN_ERR "ipmi_msghandler: unregistering kmsg dumper "
+					"failed, error %d\n", err);
+		}
+#endif /*CONFIG_IPMI_PANIC_KMSG_DUMP*/
+
+		atomic_notifier_chain_unregister(&panic_notifier_list,
+						 &panic_block);
 
 		/*
 		 * Tell the timer to stop, then wait for it to stop.  This

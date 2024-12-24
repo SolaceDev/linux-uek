@@ -1901,6 +1901,17 @@ static int __init timekeeping_init_ops(void)
 }
 device_initcall(timekeeping_init_ops);
 
+unsigned long kernel_sanity_enabled = 0;
+u64 * kernel_sanity_counter_ptr = NULL; 
+u64 timer_skips = 0;
+u64 last_log_jiffies = 0;
+u32 timer_skips_threshold = 500; 
+
+EXPORT_SYMBOL(kernel_sanity_enabled);
+EXPORT_SYMBOL(kernel_sanity_counter_ptr);
+EXPORT_SYMBOL(timer_skips);
+EXPORT_SYMBOL(timer_skips_threshold);
+
 /*
  * Apply a multiplier adjustment to the timekeeper
  */
@@ -2273,6 +2284,20 @@ void do_timer(unsigned long ticks)
 {
 	jiffies_64 += ticks;
 	calc_global_load();
+	if (test_bit(1, &kernel_sanity_enabled)) {
+		*kernel_sanity_counter_ptr += ticks;
+		if (unlikely(ticks > timer_skips_threshold)) {
+			timer_skips += ticks;
+			// Only print at most every 2 seconds
+			if (jiffies > last_log_jiffies + 2000) {
+				last_log_jiffies = jiffies_64;
+				printk(KERN_WARNING 
+					"Missed more than %lu timer ticks,"
+					" total %llu\n",
+					ticks, timer_skips);
+                        }
+		}
+	}
 }
 
 /**

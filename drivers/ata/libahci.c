@@ -1480,6 +1480,23 @@ int ahci_check_ready(struct ata_link *link)
 	void __iomem *port_mmio = ahci_port_base(link->ap);
 	u8 status = readl(port_mmio + PORT_TFDATA) & 0xFF;
 
+#ifdef CONFIG_SATA_FAULT_INJECT
+	if (unlikely(link->ap->pflags & ATA_PFLAG_FAULT_INJECT))
+	{
+		if (link->ap->faults_injected != 0) {
+			link->ap->faults_injected--;
+		}
+		if (link->ap->faults_injected == 0) {
+			link->ap->pflags &= ~ATA_PFLAG_FAULT_INJECT;
+		}
+		printk(KERN_INFO "Report disk as not Ready, "
+				 "injected faults left=%u\n",
+				 link->ap->faults_injected);
+
+		status = 0xff;
+	}
+#endif
+
 	return ata_check_ready(status);
 }
 EXPORT_SYMBOL_GPL(ahci_check_ready);
@@ -2003,6 +2020,10 @@ unsigned int ahci_qc_issue(struct ata_queued_cmd *qc)
 	 */
 	pp->active_link = qc->dev->link;
 
+#ifdef CONFIG_SATA_FAULT_INJECT
+	if (likely(!(ap->pflags & ATA_PFLAG_FAULT_INJECT))) {
+#endif
+
 	if (ata_is_ncq(qc->tf.protocol))
 		writel(1 << qc->hw_tag, port_mmio + PORT_SCR_ACT);
 
@@ -2015,6 +2036,15 @@ unsigned int ahci_qc_issue(struct ata_queued_cmd *qc)
 	}
 
 	writel(1 << qc->hw_tag, port_mmio + PORT_CMD_ISSUE);
+
+#ifdef CONFIG_SATA_FAULT_INJECT
+	} else {
+		printk(KERN_INFO "Skipping sending cmds to disk, "
+				 "failures during recovery %u\n",
+				 ap->faults_injected);
+	}
+#endif
+
 
 	ahci_sw_activity(qc->dev->link);
 

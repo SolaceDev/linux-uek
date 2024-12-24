@@ -1055,6 +1055,7 @@ static int __init early_acpi_parse_madt_lapic_addr_ovr(void)
 
 static int __init acpi_parse_madt_lapic_entries(void)
 {
+	extern void update_cpu_boot_order(void);
 	int count;
 	int x2count = 0;
 	int ret;
@@ -1102,6 +1103,9 @@ static int __init acpi_parse_madt_lapic_entries(void)
 		/* TBD: Cleanup to allow fallback to MPS */
 		return count;
 	}
+
+	update_cpu_boot_order();
+
 	return 0;
 }
 #endif				/* CONFIG_X86_LOCAL_APIC */

@@ -665,6 +665,12 @@ static void ext4_handle_error(struct super_block *sb, bool force_ro, int error,
 	 * disabled.
 	 */
 	if (test_opt(sb, ERRORS_PANIC) && !system_going_down()) {
+		/* Solace: added extra printk, see bug 44832 */
+#define SOLACE_PANIC_WARNING						   \
+		"EXT4-fs: system is forcing a kernel panic to avoid data " \
+		"corruption/deadlock due to a fatal filesystem error.  "   \
+		"Please check spool filesystem and connection to SAN.\n"
+		printk(KERN_CRIT SOLACE_PANIC_WARNING);
 		panic("EXT4-fs (device %s): panic forced after error\n",
 			sb->s_id);
 	}

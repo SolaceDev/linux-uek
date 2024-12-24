@@ -525,6 +525,26 @@ config CMA_AREAS
 
 	  If unsure, leave the default value "7" in UMA and "19" in NUMA.
 
+config PHYSMEM
+	bool "Enable physmem driver"
+	default n
+	help
+	  The physmem driver provides a way of accessing physical memory
+	  in the low 32 bits of RAM.  Used in SolOS.
+
+	  If unsure, say "N"
+
+
+config PHYSMEM
+	bool "Enable physmem driver"
+	default n
+	help
+	  The physmem driver provides a way of accessing physical memory
+	  in the low 32 bits of RAM.  Used in SolOS.
+
+	  If unsure, say "N"
+
+
 config MEM_SOFT_DIRTY
 	bool "Track memory changes"
 	depends on CHECKPOINT_RESTORE && HAVE_ARCH_SOFT_DIRTY && PROC_FS

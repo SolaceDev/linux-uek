@@ -24,6 +24,7 @@
 #include <linux/export.h>
 #include <linux/atomic.h>
 #include <linux/sched/clock.h>
+#include <linux/mm.h>		// For show_mem()
 
 #include <asm/cpu_entry_area.h>
 #include <asm/traps.h>

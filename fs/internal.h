@@ -173,6 +173,9 @@ extern void shrink_dentry_list(struct list_head *);
 /*
  * read_write.c
  */
+extern ssize_t do_loop_readv_writev(struct file *filp, struct iov_iter *iter,
+                loff_t *ppos, int type, rwf_t flags);
+
 extern int rw_verify_area(int, struct file *, const loff_t *, size_t);
 
 /*

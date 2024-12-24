@@ -26,6 +26,11 @@ static DEFINE_PER_CPU(struct perf_event *, watchdog_ev);
 static DEFINE_PER_CPU(struct perf_event *, dead_event);
 static struct cpumask dead_events_mask;
 
+#ifdef CONFIG_NMI_PANIC_NOW
+uint64_t panic_now = 0;
+EXPORT_SYMBOL(panic_now);
+#endif
+
 static unsigned long hardlockup_allcpu_dumped;
 static atomic_t watchdog_cpus = ATOMIC_INIT(0);
 
@@ -125,6 +130,12 @@ static void watchdog_overflow_callback(struct perf_event *event,
 		__this_cpu_write(watchdog_nmi_touch, false);
 		return;
 	}
+
+#ifdef CONFIG_NMI_PANIC_NOW
+	if (unlikely(panic_now)) {
+		panic("External Panic Requested");
+	}
+#endif
 
 	/* check for a hardlockup
 	 * This is done by making sure our timer interrupt

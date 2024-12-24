@@ -4259,7 +4259,9 @@ qla24xx_intr_handler(int irq, void *dev_id)
 		stat = rd_reg_dword(&reg->host_status);
 		if (qla2x00_check_reg32_for_disconnect(vha, stat))
 			break;
-		if (stat & HSRX_RISC_PAUSED) {
+		if (vha->fake_pause || (stat & HSRX_RISC_PAUSED)) {
+			static unsigned fw_dumps;
+			static u64 last_fw_dump;
 			if (unlikely(pci_channel_offline(ha->pdev)))
 				break;
 
@@ -4271,7 +4273,24 @@ qla24xx_intr_handler(int irq, void *dev_id)
 
 			qla2xxx_check_risc_status(vha);
 
+			/* Reset the firmare dump count after 15 minutes */
+			if (fw_dumps &&
+			    ((get_jiffies_64() - last_fw_dump) > 15ULL * 60ULL * HZ))
+				fw_dumps = 0;
+
+			ql_log(ql_log_info, vha, 0x504b, 
+			       "dump start=%lu, fw_dumps=%u\n",
+			       jiffies, fw_dumps);
+			last_fw_dump = get_jiffies_64();
+			if (fw_dumps++ >= 5) {
+				panic("qla2xxx: panic on 6th firmware dump "
+                                      "attempt in 15 minutes.");
+			}
 			ha->isp_ops->fw_dump(vha);
+			ql_log(ql_log_info, vha, 0x504b, "dump end=%lu\n",
+			       jiffies);
+			vha->fake_pause = 0;
+
 			set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
 			break;
 		} else if ((stat & HSRX_RISC_INT) == 0)
@@ -4388,7 +4407,7 @@ qla24xx_msix_default(int irq, void *dev_id)
 		stat = rd_reg_dword(&reg->host_status);
 		if (qla2x00_check_reg32_for_disconnect(vha, stat))
 			break;
-		if (stat & HSRX_RISC_PAUSED) {
+		if (vha->fake_pause || (stat & HSRX_RISC_PAUSED)) {
 			if (unlikely(pci_channel_offline(ha->pdev)))
 				break;
 
@@ -4401,7 +4420,12 @@ qla24xx_msix_default(int irq, void *dev_id)
 			qla2xxx_check_risc_status(vha);
 			vha->hw_err_cnt++;
 
+			ql_log(ql_log_info, vha, 0x504b, "dump start=%lu\n",
+			       jiffies);
 			ha->isp_ops->fw_dump(vha);
+			ql_log(ql_log_info, vha, 0x504b, "dump end=%lu\n",
+			       jiffies);
+
 			set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
 			break;
 		} else if ((stat & HSRX_RISC_INT) == 0)

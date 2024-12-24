@@ -277,6 +277,15 @@ struct task_group;
 
 /* Task command name length: */
 #define TASK_COMM_LEN			16
+/*
+ * Only dump TASK_* tasks. (0 for all tasks)
+ */
+extern void show_state_filter(unsigned int state_filter);
+
+extern void show_state_filter_less_stack(unsigned long state_filter,
+					 unsigned long stack_state_filter);
+
+extern void show_regs(struct pt_regs *);
 
 extern void scheduler_tick(void);
 

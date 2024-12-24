@@ -593,6 +593,9 @@ static int ext4_dx_readdir(struct file *file, struct dir_context *ctx)
 		info->curr_node = rb_first(&info->root);
 
 	while (1) {
+		if (fatal_signal_pending(current))
+			return -ERESTARTSYS;
+
 		/*
 		 * Fill the rbtree if we have no more entries,
 		 * or the inode has changed since we last read in the

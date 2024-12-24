@@ -23,6 +23,11 @@
 #include <linux/kdev_t.h>
 #include <linux/ipmi.h>
 #include <linux/ipmi_smi.h>
+#include <linux/reboot.h>
+#include <linux/workqueue.h>
+#include <linux/delay.h>
+
+#define PFX "IPMI poweroff: "
 
 static void ipmi_po_smi_gone(int if_num);
 static void ipmi_po_new_smi(int if_num, struct device *device);
@@ -35,6 +40,9 @@ static void ipmi_po_new_smi(int if_num, struct device *device);
 /* the IPMI data command */
 static int poweroff_powercycle;
 
+/* Catch reboots and powercylce */
+static int powercycle_on_reboot;
+
 /* Which interface to use, -1 means the first we see. */
 static int ifnum_to_use = -1;
 
@@ -46,6 +54,16 @@ static void (*specific_poweroff_func)(struct ipmi_user *user);
 
 /* Holds the old poweroff function so we can restore it on removal. */
 static void (*old_poweroff_func)(void);
+
+static void ipmi_po_new_smi_work(struct work_struct *work);
+
+/* power off init work queue */
+static struct workqueue_struct *init_wq;
+
+typedef struct {
+        struct work_struct init_work;
+        int if_num;
+} init_work_t;
 
 static int set_param_ifnum(const char *val, const struct kernel_param *kp)
 {
@@ -70,8 +88,16 @@ MODULE_PARM_DESC(ifnum_to_use, "The interface number to use for the watchdog "
 module_param(poweroff_powercycle, int, 0644);
 MODULE_PARM_DESC(poweroff_powercycle,
 		 " Set to non-zero to enable power cycle instead of power"
-		 " down. Power cycle is contingent on hardware support,"
+		 " down. Set to -1 to use the default pm power off."
+		 " Power cycle is contingent on hardware support,"
 		 " otherwise it defaults back to power down.");
+
+/* parameter definition to allow user to flag power cycle */
+module_param(powercycle_on_reboot, int, 0644);
+MODULE_PARM_DESC(powercycle_on_reboot,
+		 " Set to non-zero to enable power cycle instead of reboot"
+		 " Power cycle is contingent on hardware support,"
+		 " otherwise it defaults back to reboot.");
 
 /* Stuff from the get device id command. */
 static unsigned int mfg_id;
@@ -508,6 +534,8 @@ static void ipmi_poweroff_chassis(struct ipmi_user *user)
 
 		pr_err("Unable to send chassis power down message, IPMI error 0x%x\n",
 		       rv);
+	} else {
+		udelay(10000);
 	}
 }
 
@@ -540,6 +568,24 @@ static struct poweroff_function poweroff_functions[] = {
 };
 #define NUM_PO_FUNCS ARRAY_SIZE(poweroff_functions)
 
+static int powercycle_reboot_handler(struct notifier_block *this,
+                               unsigned long         code,
+                               void                  *unused)
+{
+	/* For reboots always want to do a power cycle */
+	if (code == SYS_RESTART && powercycle_on_reboot) {
+		poweroff_powercycle = 1;
+		ipmi_poweroff_chassis(ipmi_user);
+	}
+        return NOTIFY_OK;
+}
+
+/* We want the powercyle to be called last in the notifer chain */
+static struct notifier_block ipmi_powercyle_reboot_notifier = {
+        .notifier_call  = powercycle_reboot_handler,
+        .next           = NULL,
+        .priority       = INT_MIN, 
+};
 
 /* Called on a powerdown request. */
 static void ipmi_poweroff_function(void)
@@ -555,10 +601,38 @@ static void ipmi_poweroff_function(void)
    will be grabbed by this code and used to perform the powerdown. */
 static void ipmi_po_new_smi(int if_num, struct device *device)
 {
+	bool ret = false;
+	init_work_t *work;
+	
+	if (!init_wq) {
+		printk(KERN_ERR PFX "Work queue is not initialized for "
+				    "ipmi power off\n");
+		return;
+	}
+	work = (init_work_t *)kmalloc(sizeof(init_work_t), GFP_KERNEL);
+	if (!work) {
+		printk(KERN_ERR PFX "Failed to alloc work queue memory for "
+				    "ipmi power off\n");
+		return;
+	}
+
+	INIT_WORK( (struct work_struct *)work, ipmi_po_new_smi_work);
+	work->if_num = if_num;
+	ret = queue_work(init_wq, (struct work_struct *)work);
+	if (!ret)
+		printk(KERN_ERR PFX "Failed to queue ipmi power off init for "
+				    " new smi\n");
+}
+
+static void ipmi_po_new_smi_work(struct work_struct *work)
+{
 	struct ipmi_system_interface_addr smi_addr;
 	struct kernel_ipmi_msg            send_msg;
 	int                               rv;
 	int                               i;
+	init_work_t *queued_work = (init_work_t *)work;
+
+	int if_num = queued_work->if_num;
 
 	if (ready)
 		return;
@@ -627,8 +701,17 @@ static void ipmi_po_new_smi(int if_num, struct device *device)
 		poweroff_functions[i].platform_type);
 	specific_poweroff_func = poweroff_functions[i].poweroff_func;
 	old_poweroff_func = pm_power_off;
-	pm_power_off = ipmi_poweroff_function;
+	if (poweroff_powercycle == -1) {
+		printk(KERN_INFO PFX "Using default pm power off.\n");
+	} else {
+		pm_power_off = ipmi_poweroff_function;
+	}
 	ready = 1;
+	if (powercycle_on_reboot) {
+		printk(KERN_INFO PFX "Power cycle on reboot is enabled.\n");
+		register_reboot_notifier(&ipmi_powercyle_reboot_notifier);
+	}
+
 }
 
 static void ipmi_po_smi_gone(int if_num)
@@ -638,6 +721,11 @@ static void ipmi_po_smi_gone(int if_num)
 
 	if (ipmi_ifnum != if_num)
 		return;
+
+	if (powercycle_on_reboot) {
+		unregister_reboot_notifier(&ipmi_powercyle_reboot_notifier);
+		printk(KERN_INFO PFX "Power cycle on reboot is disabled.\n");
+	}
 
 	ready = 0;
 	ipmi_destroy_user(ipmi_user);
@@ -701,6 +789,7 @@ static int __init ipmi_poweroff_init(void)
 	}
 #endif
 
+	init_wq = create_workqueue("ipmi_po_init_queue");
 	rv = ipmi_smi_watcher_register(&smi_watcher);
 
 #ifdef CONFIG_PROC_FS
@@ -726,7 +815,16 @@ static void __exit ipmi_poweroff_cleanup(void)
 
 	ipmi_smi_watcher_unregister(&smi_watcher);
 
+	flush_workqueue(init_wq);
+	destroy_workqueue(init_wq);
+
 	if (ready) {
+		if (powercycle_on_reboot) {
+			unregister_reboot_notifier(
+			    &ipmi_powercyle_reboot_notifier);
+			printk(KERN_INFO PFX 
+			       "Power cycle on reboot is disabled.\n");
+		}
 		rv = ipmi_destroy_user(ipmi_user);
 		if (rv)
 			pr_err("could not cleanup the IPMI user: 0x%x\n", rv);

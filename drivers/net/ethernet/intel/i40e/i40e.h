@@ -590,6 +590,11 @@ struct i40e_pf {
  */
 #define I40E_FLAG_TOTAL_PORT_SHUTDOWN_ENABLED	BIT(27)
 #define I40E_FLAG_VF_VLAN_PRUNING		BIT(28)
+/* 1G_SPEED_LIMIT
+ * limit connection speed to 1G
+*/
+#define I40E_FLAG_SPEED_LIMIT_1G			BIT(29)
+
 
 	struct i40e_client_instance *cinst;
 	bool stat_offsets_loaded;
@@ -755,6 +760,9 @@ struct i40e_pf {
 	u16 last_sw_conf_valid_flags;
 	/* List to keep previous DDP profiles to be rolled back in the future */
 	struct list_head ddp_old_prof;
+
+	/* Flag: limit connection speed to 1Gbps */
+	bool speed_limit_1g;
 };
 
 /**

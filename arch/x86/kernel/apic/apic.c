@@ -35,6 +35,7 @@
 #include <linux/dmi.h>
 #include <linux/smp.h>
 #include <linux/mm.h>
+#include <linux/sort.h>
 
 #include <asm/trace/irq_vectors.h>
 #include <asm/irq_remapping.h>
@@ -89,6 +90,8 @@ physid_mask_t phys_cpu_present_map;
  */
 static unsigned int disabled_cpu_apicid __ro_after_init = BAD_APICID;
 
+static unsigned int disabled_cpuid_reorder __read_mostly = 0;
+
 /*
  * This variable controls which CPUs receive external NMIs.  By default,
  * external NMIs are delivered only to the BSP.
@@ -109,6 +112,30 @@ DEFINE_EARLY_PER_CPU_READ_MOSTLY(u32, x86_cpu_to_acpiid, U32_MAX);
 EXPORT_EARLY_PER_CPU_SYMBOL(x86_cpu_to_apicid);
 EXPORT_EARLY_PER_CPU_SYMBOL(x86_bios_cpu_apicid);
 EXPORT_EARLY_PER_CPU_SYMBOL(x86_cpu_to_acpiid);
+
+static int u16_cmp(const void *d1, const void *d2)
+{
+	const u16 *b1 = (u16 *)d1;
+	const u16 *b2 = (u16 *)d2;
+	return *b1 - *b2;
+}
+
+void update_cpu_boot_order(void)
+{
+	u16 *cpu_to_apicid = early_per_cpu_ptr(x86_cpu_to_apicid);
+	u16 *bios_cpu_apicid = early_per_cpu_ptr(x86_bios_cpu_apicid);
+	printk(KERN_INFO "BSP is apicid %d\n", *cpu_to_apicid);
+	//Solace would like to keep the processor order the same as previous
+	//releases, which is typically ordered by APIC ID for systems with.
+	//less then 8 logical cores.  Always leave CPU0 as the BSP even
+	//if another core other then processor 1 core 0 booted. 
+	if (!disabled_cpuid_reorder) {
+	    sort(cpu_to_apicid+1, num_processors-1, 2, u16_cmp, NULL);
+	    sort(bios_cpu_apicid+1, num_processors-1, 2, u16_cmp, NULL);
+	    printk(KERN_INFO "cpuids were reordered\n");
+        }
+}
+
 
 #ifdef CONFIG_X86_32
 
@@ -2968,3 +2995,13 @@ static int __init apic_set_extnmi(char *arg)
 	return 0;
 }
 early_param("apic_extnmi", apic_set_extnmi);
+
+static int __init apic_disable_cpuid_reorder(char *arg)
+{
+	if (!arg || !get_option(&arg, &disabled_cpuid_reorder))
+		return -EINVAL;
+
+	return 0;
+}
+early_param("disable_cpuid_reorder", apic_disable_cpuid_reorder);
+

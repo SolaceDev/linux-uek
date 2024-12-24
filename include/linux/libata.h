@@ -192,6 +192,7 @@ enum {
 	ATA_LFLAG_RST_ONCE	= (1 << 9), /* limit recovery to one reset */
 	ATA_LFLAG_CHANGED	= (1 << 10), /* LPM state changed on this link */
 	ATA_LFLAG_NO_DEBOUNCE_DELAY = (1 << 11), /* no debounce delay on link resume */
+	ATA_LFLAG_DISABLE_FAILFAST      = (1 << 31), /* disable FAILFAST on this link */
 
 	/* struct ata_port flags */
 	ATA_FLAG_SLAVE_POSS	= (1 << 0), /* host supports slave dev */
@@ -245,6 +246,8 @@ enum {
 	ATA_PFLAG_PIO32CHANGE	= (1 << 21),  /* 32bit PIO can be turned on/off */
 	ATA_PFLAG_EXTERNAL	= (1 << 22),  /* eSATA/external port */
 
+	ATA_PFLAG_FAULT_INJECT = (1 << 30), /* Enable for emulating a drive that
+					       doesn't respond */
 	/* struct ata_queued_cmd flags */
 	ATA_QCFLAG_ACTIVE	= (1 << 0), /* cmd not yet ack'd to scsi lyer */
 	ATA_QCFLAG_DMAMAP	= (1 << 1), /* SG table is DMA mapped */
@@ -900,6 +903,11 @@ struct ata_port {
 #endif
 	/* owned by EH */
 	u8			sector_buf[ATA_SECT_SIZE] ____cacheline_aligned;
+#ifdef CONFIG_SATA_FAULT_INJECT
+	unsigned int            faults_injected;
+	unsigned long		failfast_cnt;
+	unsigned long		non_failfast_cnt;
+#endif
 };
 
 /* The following initializer overrides a method to NULL whether one of

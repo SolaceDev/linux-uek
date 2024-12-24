@@ -4873,6 +4873,17 @@ void ata_qc_issue(struct ata_queued_cmd *qc)
 		ata_link_abort(link);
 		return;
 	}
+#ifdef CONFIG_SATA_FAULT_INJECT
+	if (qc->scsicmd) {
+		struct scsi_cmnd *scmd = qc->scsicmd;
+		struct request *rq = scmd->request;
+		if (!(rq->cmd_flags & REQ_FAILFAST_MASK)) {
+			ap->non_failfast_cnt++;
+		} else {
+			ap->failfast_cnt++;
+		}
+	}
+#endif
 
 	qc->err_mask |= ap->ops->qc_prep(qc);
 	if (unlikely(qc->err_mask))

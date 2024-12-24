@@ -27,6 +27,7 @@ help:
 	@echo '  objtool                - an ELF object analysis tool'
 	@echo '  pci                    - PCI tools'
 	@echo '  perf                   - Linux performance measurement and analysis tool'
+	@echo '  perf-rpm               - Linux performance measurement and analysis tool rpm package'
 	@echo '  selftests              - various kernel selftests'
 	@echo '  bootconfig             - boot config tool'
 	@echo '  spi                    - spi tools'
@@ -84,6 +85,10 @@ PERF_O   = $(if $(O),$(O)/tools/perf,)
 perf: FORCE
 	$(Q)mkdir -p $(PERF_O) .
 	$(Q)$(MAKE) --no-print-directory -C perf O=$(PERF_O) subdir=
+
+perf-rpm: FORCE
+	$(Q)mkdir -p $(PERF_O) .
+	$(Q)$(MAKE) --no-print-directory -C perf-rpm O=$(PERF_O) subdir=
 
 selftests: FORCE
 	$(call descend,testing/$@)
@@ -166,6 +171,10 @@ perf_clean:
 	$(Q)mkdir -p $(PERF_O) .
 	$(Q)$(MAKE) --no-print-directory -C perf O=$(PERF_O) subdir= clean
 
+perf-rpm_clean: perf_clean
+	$(Q)mkdir -p $(PERF_O) .
+	$(Q)$(MAKE) --no-print-directory -C perf O=$(PERF_O) subdir= clean
+
 selftests_clean:
 	$(call descend,testing/$(@:_clean=),clean)
 
@@ -186,6 +195,6 @@ clean: acpi_clean cgroup_clean cpupower_clean hv_clean firewire_clean \
 		vm_clean bpf_clean iio_clean x86_energy_perf_policy_clean tmon_clean \
 		freefall_clean build_clean libbpf_clean libsubcmd_clean liblockdep_clean \
 		gpio_clean objtool_clean leds_clean wmi_clean pci_clean firmware_clean debugging_clean \
-		intel-speed-select_clean tracing_clean
+		intel-speed-select_clean perf-rpm_clean tracing_clean
 
 .PHONY: FORCE

@@ -7,9 +7,9 @@
 static u64 patterns[] __initdata = {
 	/* The first entry has to be 0 to leave memtest with zeroed memory */
 	0,
-	0xffffffffffffffffULL,
 	0x5555555555555555ULL,
 	0xaaaaaaaaaaaaaaaaULL,
+	0xffffffffffffffffULL,
 	0x1111111111111111ULL,
 	0x2222222222222222ULL,
 	0x4444444444444444ULL,

@@ -1033,6 +1033,14 @@ cpumap_print_list_to_buf(char *buf, const struct cpumask *mask,
 				   nr_cpu_ids, off, count) - 1;
 }
 
+static inline ssize_t
+cpumap_print_to_pagebuf_32bit(bool list, char *buf, const struct cpumask *mask)
+{
+	return bitmap_print_to_pagebuf(list, buf, cpumask_bits(mask),
+				       (*cpumask_bits(mask) > 0x100000000) ? 
+                                        nr_cpu_ids : min(nr_cpu_ids,32U));
+}
+
 #if NR_CPUS <= BITS_PER_LONG
 #define CPU_MASK_ALL							\
 (cpumask_t) { {								\

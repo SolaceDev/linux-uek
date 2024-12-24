@@ -1099,6 +1099,10 @@ config HARDLOCKUP_DETECTOR
 	  chance to run.  The current stack trace is displayed upon detection
 	  and the system will stay locked up.
 
+config NMI_PANIC_NOW
+        bool "Adds a flag when set to trigger a panic"
+        depends on HARDLOCKUP_DETECTOR
+
 config BOOTPARAM_HARDLOCKUP_PANIC
 	bool "Panic (Reboot) On Hard Lockups"
 	depends on HARDLOCKUP_DETECTOR

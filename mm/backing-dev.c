@@ -46,6 +46,49 @@ static void bdi_debug_init(void)
 	bdi_debug_root = debugfs_create_dir("bdi", NULL);
 }
 
+/* Solace: bug 44953
+ *	After a filesystem has been umount()ed and the block device
+ *	fsync()ed, the kernel may still have the block device inode
+ *	left on the b_dirty list.  Since we still want to check if
+ *	there are outstanding dirty inodes, we will instead supress
+ *	this inode being reported as dirty if ->i_ino == 0 and there
+ *	are no dirty buffers on the inodes.
+ */
+static int suppress_b_dirty(struct inode *inode)
+{
+	struct page *pages[16];
+	pgoff_t start = 0;
+	unsigned nr;
+
+	if (inode->i_ino != 0)
+		return 0;
+	if (!inode->i_mapping)
+		return 0;
+	if (mapping_tagged(inode->i_mapping, PAGECACHE_TAG_DIRTY))
+		return 0;
+
+	while ((nr = find_get_pages(inode->i_mapping, &start, 16, pages)) > 0) {
+		int is_dirty = 0;
+		unsigned i;
+		for (i = 0; i < nr; i++) {
+			struct page *page = pages[i];
+			if (!page)
+				continue;
+			is_dirty |= PageDirty(page);
+			put_page(page);
+		}
+		if (is_dirty)
+			return 0;
+	}
+
+	/* Check again just in case things changed */
+	if (mapping_tagged(inode->i_mapping, PAGECACHE_TAG_DIRTY))
+		return 0;
+
+	/* We found no dirty buffers.  It should be safe to supress. */
+	return 1;
+}
+
 static int bdi_debug_stats_show(struct seq_file *m, void *v)
 {
 	struct backing_dev_info *bdi = m->private;
@@ -58,8 +101,10 @@ static int bdi_debug_stats_show(struct seq_file *m, void *v)
 
 	nr_dirty = nr_io = nr_more_io = nr_dirty_time = 0;
 	spin_lock(&wb->list_lock);
-	list_for_each_entry(inode, &wb->b_dirty, i_io_list)
-		nr_dirty++;
+	list_for_each_entry(inode, &wb->b_dirty, i_io_list) {
+		if (!suppress_b_dirty(inode))
+			nr_dirty++;
+	}
 	list_for_each_entry(inode, &wb->b_io, i_io_list)
 		nr_io++;
 	list_for_each_entry(inode, &wb->b_more_io, i_io_list)
@@ -87,13 +132,13 @@ static int bdi_debug_stats_show(struct seq_file *m, void *v)
 		   "b_dirty_time:       %10lu\n"
 		   "bdi_list:           %10u\n"
 		   "state:              %10lx\n",
-		   (unsigned long) K(wb_stat(wb, WB_WRITEBACK)),
-		   (unsigned long) K(wb_stat(wb, WB_RECLAIMABLE)),
+		   (unsigned long) K(wb_stat_sum(wb, WB_WRITEBACK)),
+		   (unsigned long) K(wb_stat_sum(wb, WB_RECLAIMABLE)),
 		   K(wb_thresh),
 		   K(dirty_thresh),
 		   K(background_thresh),
-		   (unsigned long) K(wb_stat(wb, WB_DIRTIED)),
-		   (unsigned long) K(wb_stat(wb, WB_WRITTEN)),
+		   (unsigned long) K(wb_stat_sum(wb, WB_DIRTIED)),
+		   (unsigned long) K(wb_stat_sum(wb, WB_WRITTEN)),
 		   (unsigned long) K(wb->write_bandwidth),
 		   nr_dirty,
 		   nr_io,

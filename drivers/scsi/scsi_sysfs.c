@@ -969,6 +969,7 @@ static DEVICE_ATTR(field, S_IRUGO, show_iostat_##field, NULL)
 show_sdev_iostat(iorequest_cnt);
 show_sdev_iostat(iodone_cnt);
 show_sdev_iostat(ioerr_cnt);
+show_sdev_iostat(timeout_cnt);
 
 static ssize_t
 sdev_show_modalias(struct device *dev, struct device_attribute *attr, char *buf)
@@ -1304,6 +1305,7 @@ static struct attribute *scsi_sdev_attrs[] = {
 	REF_EVT(soft_threshold_reached),
 	REF_EVT(mode_parameter_change_reported),
 	REF_EVT(lun_change_reported),
+	&dev_attr_timeout_cnt.attr,
 	NULL
 };
 
