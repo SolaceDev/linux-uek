@@ -551,29 +551,6 @@ void ata_scsi_error(struct Scsi_Host *host)
 	DPRINTK("EXIT\n");
 }
 
-void ata_scsi_check_failfast(struct ata_port *ap, struct request *rq)
-{
-	struct ata_link *link;
-	if (blk_noretry_request(rq)) {
-		ata_for_each_link(link, ap, EDGE) {
-			if (!(link->flags & ATA_LFLAG_DISABLE_FAILFAST)) {
-				link->flags |= ATA_LFLAG_NO_RETRY;
-				ata_link_warn(link,
-					"eh failfast without retries "
-					"flags=%x\n", rq->cmd_flags);
-			} else {
-				ata_link_warn(link, "eh failfast disabled\n");
-			}
-		}
-	} else {
-		ata_for_each_link(link, ap, EDGE) {
-			link->flags &= ~ATA_LFLAG_NO_RETRY;
-			ata_link_warn(link, "eh with retries flags=%x\n",
-					     rq->cmd_flags);
-		}
-	}
-}
-
 /**
  * ata_scsi_cmd_error_handler - error callback for a list of commands
  * @host:	scsi host containing the port
@@ -626,7 +603,7 @@ void ata_scsi_cmd_error_handler(struct Scsi_Host *host, struct ata_port *ap,
 
 		list_for_each_entry_safe(scmd, tmp, eh_work_q, eh_entry) {
 			struct ata_queued_cmd *qc;
-			struct request *rq = scmd->request;
+			// struct request *rq = scmd->request;
 
 			ata_qc_for_each_raw(ap, qc, i) {
 				if (qc->flags & ATA_QCFLAG_ACTIVE &&
@@ -643,7 +620,7 @@ void ata_scsi_cmd_error_handler(struct Scsi_Host *host, struct ata_port *ap,
 					nr_timedout++;
 				}
 				/* scmd is errored or timed out */
-				ata_scsi_check_failfast(ap, rq);
+				// ata_scsi_check_failfast(ap, rq);
 			} else {
 				/* Normal completion occurred after
 				 * SCSI timeout but before this point.

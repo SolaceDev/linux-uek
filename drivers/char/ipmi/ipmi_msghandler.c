@@ -5100,6 +5100,7 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 	struct ipmi_system_interface_addr *si;
 	struct ipmi_addr                  addr;
 	struct ipmi_recv_msg              recv_msg;
+	struct kmsg_dump_iter iter;
 
 	unsigned long sel_avail_space = 1024;
 
@@ -5239,7 +5240,8 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 		// If in a NMI there may be less time to write logs
 		if (in_nmi()) sel_avail_space = min(sel_avail_space,2250UL * write_size);
 
-		kmsg_dump_get_buffer(dumper, false, panic_buf, 
+		kmsg_dump_rewind(&iter);
+		kmsg_dump_get_buffer(&iter, false, panic_buf, 
 				     min((unsigned long)PANIC_BUF_SIZE,
 				     sel_avail_space), 
 				     &panic_log_length);
