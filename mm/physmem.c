@@ -290,7 +290,7 @@ static int physmem_mmap(
 
     // Disallow swapping (safety - the pages should have already been
     // marked reserved during allocation)
-    vma->vm_flags |= VM_SPECIAL;
+    vm_flags_set(vma, VM_SPECIAL);
 
     rc = remap_pfn_range(vma,
                          vma->vm_start,
@@ -418,9 +418,9 @@ int __init_memblock boot_physmem_init(void)
 
 
 	// Align the memory to a full page so that we can make sure we can mmap it
-    base = memblock_find_in_range(PAGE_SIZE, 0x7fff0000, physmem_size, PAGE_SIZE);
+    base = memblock_phys_alloc_range(physmem_size, PAGE_SIZE, PAGE_SIZE, 0x7fff0000);
 	if (base == 0) {
-		FERROR("alloc_bootmem failed for size %u\n", (unsigned)size);
+		FERROR("memblock_phys_alloc_range failed for size %u\n", (unsigned)size);
 		return -ENOMEM;
 	}
 
@@ -475,7 +475,7 @@ static int __init physmem_init (void) {
         goto out0;
     }
 
-    physmem_class = class_create(THIS_MODULE, "phys");
+    physmem_class = class_create("phys");
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
     device_create(physmem_class, NULL, MKDEV(physmem_majorNum, 0), NULL, MODULE_NAME);
 #else
