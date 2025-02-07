@@ -290,7 +290,7 @@ static int physmem_mmap(
 
     // Disallow swapping (safety - the pages should have already been
     // marked reserved during allocation)
-    vma->vm_flags |= VM_SPECIAL;
+    vm_flags_set(vma, VM_SPECIAL);
 
     rc = remap_pfn_range(vma,
                          vma->vm_start,
@@ -393,6 +393,11 @@ int __init physmem_setup(char *str)
 
 early_param("physmem", physmem_setup);
 
+extern
+phys_addr_t __init_memblock memblock_find_in_range(phys_addr_t start,
+    phys_addr_t end, phys_addr_t size,
+    phys_addr_t align);
+
 int __init_memblock boot_physmem_init(void)
 {
 	unsigned long long base;
@@ -475,7 +480,7 @@ static int __init physmem_init (void) {
         goto out0;
     }
 
-    physmem_class = class_create(THIS_MODULE, "phys");
+    physmem_class = class_create("phys");
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
     device_create(physmem_class, NULL, MKDEV(physmem_majorNum, 0), NULL, MODULE_NAME);
 #else
