@@ -974,7 +974,6 @@ void __ext4_std_error(struct super_block *sb, const char *function,
 	fsnotify_sb_error(sb, NULL, errno ? errno : EFSCORRUPTED);
 
 	ext4_handle_error(sb, false, -errno, 0, 0, function, line);
-	}
 }
 
 void __ext4_msg(struct super_block *sb,
