@@ -69,7 +69,7 @@ static void bdi_debug_init(void)
  */
 static int suppress_b_dirty(struct inode *inode)
 {
-	struct page *pages[16];
+	struct folio_batch fbatch;
 	pgoff_t start = 0;
 	unsigned nr;
 
@@ -80,16 +80,20 @@ static int suppress_b_dirty(struct inode *inode)
 	if (mapping_tagged(inode->i_mapping, PAGECACHE_TAG_DIRTY))
 		return 0;
 
-	while ((nr = find_get_pages(inode->i_mapping, &start, 16, pages)) > 0) {
+	folio_batch_init(&fbatch);
+
+	while ((nr = filemap_get_folios(inode->i_mapping, &start, 16, &fbatch)) > 0) {
 		int is_dirty = 0;
 		unsigned i;
 		for (i = 0; i < nr; i++) {
-			struct page *page = pages[i];
-			if (!page)
+			struct folio *folio = fbatch.folios[i];
+			if (!folio)
 				continue;
-			is_dirty |= PageDirty(page);
-			put_page(page);
+			is_dirty |= folio_test_dirty(folio);
+			folio_put(folio);
 		}
+		folio_batch_release(&fbatch);
+
 		if (is_dirty)
 			return 0;
 	}
