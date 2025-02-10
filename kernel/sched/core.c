@@ -7609,8 +7609,6 @@ static void sched_show_task_filter(struct task_struct *p,
 		put_task_stack(p);
 	}
 }
-	unsigned int state = READ_ONCE(p->__state);
-
 
 void sched_show_task(struct task_struct *p)
 {
