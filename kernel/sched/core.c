@@ -7562,14 +7562,14 @@ state_filter_match(unsigned long state_filter, struct task_struct *p)
 		return true;
 
 	/* filter, but doesn't match */
-	if (!(p->state & state_filter))
+	if (!(p->__state & state_filter))
 		return false;
 
 	/*
 	 * When looking for TASK_UNINTERRUPTIBLE skip TASK_IDLE (allows
 	 * TASK_KILLABLE).
 	 */
-	if (state_filter & TASK_UNINTERRUPTIBLE && p->state & TASK_IDLE)
+	if (state_filter & TASK_UNINTERRUPTIBLE && p->__state & TASK_IDLE)
 		return false;
 
 	return true;
