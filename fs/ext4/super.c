@@ -746,6 +746,12 @@ static void ext4_handle_error(struct super_block *sb, bool force_ro, int error,
 	 * disabled.
 	 */
 	if (test_opt(sb, ERRORS_PANIC) && !system_going_down()) {
+	/* Solace: added extra printk, see bug 44832 */
+#define SOLACE_PANIC_WARNING						   \
+		"EXT4-fs: system is forcing a kernel panic to avoid data " \
+		"corruption/deadlock due to a fatal filesystem error.  "   \
+		"Please check spool filesystem and connection to SAN.\n"
+		printk(KERN_CRIT SOLACE_PANIC_WARNING);
 		panic("EXT4-fs (device %s): panic forced after error\n",
 			sb->s_id);
 	}
@@ -761,12 +767,6 @@ static void ext4_handle_error(struct super_block *sb, bool force_ro, int error,
 	 * procedure is confusing code such as freeze_super() leading to
 	 * deadlocks and other problems.
 	 */
-	/* Solace: added extra printk, see bug 44832 */
-#define SOLACE_PANIC_WARNING						   \
-		"EXT4-fs: system is forcing a kernel panic to avoid data " \
-		"corruption/deadlock due to a fatal filesystem error.  "   \
-		"Please check spool filesystem and connection to SAN.\n"
-		printk(KERN_CRIT SOLACE_PANIC_WARNING);
 }
 
 static void update_super_work(struct work_struct *work)
@@ -995,7 +995,6 @@ void __ext4_std_error(struct super_block *sb, const char *function,
 	fsnotify_sb_error(sb, NULL, errno ? errno : EFSCORRUPTED);
 
 	ext4_handle_error(sb, false, -errno, 0, 0, function, line);
-
 
 }
 
