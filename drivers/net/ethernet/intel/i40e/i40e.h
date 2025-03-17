@@ -191,6 +191,10 @@ enum i40e_pf_flags {
 	 */
 	I40E_FLAG_TOTAL_PORT_SHUTDOWN_ENA,
 	I40E_FLAG_VF_VLAN_PRUNING_ENA,
+	/* 1G_SPEED_LIMIT
+	 * limit connection speed to 1G
+	 */
+	I40E_FLAG_SPEED_LIMIT_1G,
 	I40E_PF_FLAGS_NBITS,		/* must be last */
 };
 
@@ -685,6 +689,9 @@ struct i40e_pf {
 	u16 last_sw_conf_valid_flags;
 	/* List to keep previous DDP profiles to be rolled back in the future */
 	struct list_head ddp_old_prof;
+
+	/* Flag: limit connection speed to 1Gbps */
+	bool speed_limit_1g;
 };
 
 /**
