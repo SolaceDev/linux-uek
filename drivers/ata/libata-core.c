@@ -5012,7 +5012,7 @@ void ata_qc_issue(struct ata_queued_cmd *qc)
 #ifdef CONFIG_SATA_FAULT_INJECT
 	if (qc->scsicmd) {
 		struct scsi_cmnd *scmd = qc->scsicmd;
-		struct request *rq = scmd->request;
+		struct request *rq = scsi_cmd_to_rq(scmd);
 		if (!(rq->cmd_flags & REQ_FAILFAST_MASK)) {
 			ap->non_failfast_cnt++;
 		} else {

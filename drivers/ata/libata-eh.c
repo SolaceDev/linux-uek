@@ -655,7 +655,7 @@ void ata_scsi_cmd_error_handler(struct Scsi_Host *host, struct ata_port *ap,
 
 	list_for_each_entry_safe(scmd, tmp, eh_work_q, eh_entry) {
 		struct ata_queued_cmd *qc;
-			struct request *rq = scmd->request;
+		struct request *rq = scsi_cmd_to_rq(scmd);
 
 		/*
 		 * If the scmd was added to EH, via ata_qc_schedule_eh() ->
