@@ -5361,7 +5361,7 @@ struct sel_info
 typedef struct sel_info sel_info_t;
 
 /* This is to be used with ipmi_kmsg_dump */
-int get_sel_info(struct ipmi_smi *intf, struct ipmi_addr *addr, 
+static int get_sel_info(struct ipmi_smi *intf, struct ipmi_addr *addr,
 		struct ipmi_recv_msg *recv_msg,
 		sel_info_t *sel_info)
 {
@@ -5387,6 +5387,7 @@ int get_sel_info(struct ipmi_smi *intf, struct ipmi_addr *addr,
 }
 
 /* This is to be used with ipmi_kmsg_dump */
+static
 unsigned int get_alloc_unit_size(struct ipmi_smi *intf, struct ipmi_addr *addr,
 				struct ipmi_recv_msg *recv_msg)
 {

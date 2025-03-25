@@ -382,7 +382,7 @@ static int have_initialized = 0;
 static unsigned long physmem_size = 0;
 
 int boot_physmem_init(void);
-//static
+static
 int __init physmem_setup(char *str)
 {
     dprintk(KERN_ALERT "physmem_setup()\n");

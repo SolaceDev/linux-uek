@@ -579,7 +579,7 @@ void ata_scsi_error(struct Scsi_Host *host)
 
 }
 
-void ata_scsi_check_failfast(struct ata_port *ap, struct request *rq)
+static void ata_scsi_check_failfast(struct ata_port *ap, struct request *rq)
 {
 	struct ata_link *link;
 	if (blk_noretry_request(rq)) {
