@@ -5414,7 +5414,7 @@ unsigned int get_alloc_unit_size(struct ipmi_smi *intf, struct ipmi_addr *addr,
 
 
 static void ipmi_kmsg_dump(struct kmsg_dumper *dumper, 
-			   enum kmsg_dump_reason reason)
+                           struct kmsg_dump_detail *detail)
 {
 	unsigned long panic_log_length;
 	struct kernel_ipmi_msg            msg;
@@ -5436,11 +5436,11 @@ static void ipmi_kmsg_dump(struct kmsg_dumper *dumper,
 	}
 #endif
 
-	if (reason == KMSG_DUMP_EMERG) {
+	if (detail->reason == KMSG_DUMP_EMERG) {
 		ipmi_powercycle_chassis();
 		udelay(1000);
 		return;
-	} else if (reason > KMSG_DUMP_OOPS) {
+	} else if (detail->reason > KMSG_DUMP_OOPS) {
 		return;
 	}
 
