@@ -1743,7 +1743,7 @@ static const struct file_operations ahci_fops_inject = {
 	.read = show_faults_injected,
 	.write = set_faults_to_inject,
 	.open = open_file_generic,
-	.llseek = no_llseek,
+	.llseek = noop_llseek,
 };
 
 static const struct file_operations ahci_fops_failfast = {
@@ -1751,7 +1751,7 @@ static const struct file_operations ahci_fops_failfast = {
 	.read = show_failfast,
 	.write = clear_cnts,
 	.open = open_file_generic,
-	.llseek = no_llseek,
+	.llseek = noop_llseek,
 };
 
 static const struct file_operations ahci_fops_non_failfast = {
@@ -1759,7 +1759,7 @@ static const struct file_operations ahci_fops_non_failfast = {
 	.read = show_non_failfast,
 	.write = clear_cnts,
 	.open = open_file_generic,
-	.llseek = no_llseek,
+	.llseek = noop_llseek,
 };
 
 #endif
