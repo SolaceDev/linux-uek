@@ -1,0 +1,191 @@
+#!/bin/bash
+
+# Source version.mk to get image registry, repo, and tag definitions
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+if [[ -f "${SCRIPT_DIR}/version.mk" ]]; then
+    source "${SCRIPT_DIR}/version.mk"
+fi
+
+# Build the Docker image if needed
+make -C "${SCRIPT_DIR}" docker-build
+if [[ $? -ne 0 ]]; then
+    echo "Error: Failed to build Docker image"
+    exit 1
+fi
+
+RUN_DEV_ENV_TMP=${RUN_DEV_ENV_TMP:-"/opt/sbox/${USER}/tmp"}
+
+echo "Temp directory is ${RUN_DEV_ENV_TMP}"
+
+if [[ ! -d ${RUN_DEV_ENV_TMP} ]]; then
+    mkdir -p ${RUN_DEV_ENV_TMP}
+    if [[ $? -ne 0 ]]; then
+        echo "Failed to create temp directory ${RUN_DEV_ENV_TMP}"
+        exit 1
+    fi
+fi
+
+# Verify required variables are set from version.mk
+if [[ -z ${OL9_RUN_DEV_ENV_REGISTRY} ]] || [[ -z ${OL9_RUN_DEV_ENV_REPO} ]] || [[ -z ${OL9_RUN_DEV_ENV_KERNEL_REPO_TAG} ]]; then
+    echo "Error: Required variables not set. Make sure version.mk was sourced correctly."
+    echo "  OL9_RUN_DEV_ENV_REGISTRY=${OL9_RUN_DEV_ENV_REGISTRY}"
+    echo "  OL9_RUN_DEV_ENV_REPO=${OL9_RUN_DEV_ENV_REPO}"
+    echo "  OL9_RUN_DEV_ENV_KERNEL_REPO_TAG=${OL9_RUN_DEV_ENV_KERNEL_REPO_TAG}"
+    exit 1
+fi
+tmpfile=$(mktemp ${RUN_DEV_ENV_TMP}/launch-script.XXXXXX)
+
+#Defaults for ENV
+npm_config_cache=${npm_config_cache:-/tmp/.npm}
+LANG=${LANG:-en_US.UTF-8}
+SOLDEV_HM=${SOLDEV_HM:-/opt/soldev}
+SVN_PATH_OVERRIDE=${SVN_PATH_OVERRIDE:-/opt/tools/centos7/svn/1.9.7/bin}
+DISTCC_DIR=${DISTCC_DIR:-/tmp/distcc}
+PYTHONUSERBASE=${PYTHONUSERBASE:-/usr/local}
+
+SUPPORTED_AUTO_ENV_VAR=(
+                  "npm_config_cache"
+                  "LANG"
+                  "RELEASE_BUILD"
+                  "SVN_PATH_OVERRIDE"
+                  "SOLDEV_HM"
+                  "BUILD_PKGDEST"
+                  "USER"
+                  "DISTCC_HOSTS"
+                  "VERBOSE_TOOL_WRAPPER"
+                  "TCLLIBPATH"
+                  "LD_LIBRARY_PATH"
+                  "EMAIL"
+                  "DISTCC_DIR"
+                  "DISTCC_VERBOSE"
+                  "GTEST_PARAMS"
+                  "PYTHONNOUSERSITE"
+                  "PYTHONUSERBASE"
+                  "VERBOSE_TOOL_WRAPPER"
+                  "DISTCC_SKIP_LOCAL_RETRY"
+                  "DISTCC_HOSTS_OVERRIDE"
+                  "CODE_COVERAGE"
+                  "COV_HOME"
+                  "COV_INSTALL"
+                  "COV_VIEW_IM"
+                  "COV_ADMIN_PASSWORD"
+                  "COV_STREAM"
+                  "COV_CONCURRENCY"
+                  "COV_HOST"
+                  "SVN_USER"
+                  "SVN_PASSWORD"
+                  "BUILD_NUMBER"
+                  )
+
+echo "#!/bin/bash" > ${tmpfile}
+if [[ -n ${OL9_ENVIRONMENT_FILE} ]]; then
+	cat ${OL9_ENVIRONMENT_FILE} >> ${tmpfile}
+elif [[ -n ${OL9_SOLDEV_ENVIRONMENT} ]]; then
+        # Default to load the development env
+        if [[ ${OL9_SOLDEV_ENVIRONMENT} -eq 1 ]]; then
+            echo source /usr/local/devtools/bin/soldev_env.sh >> ${tmpfile}
+        else
+            echo source ${OL9_SOLDEV_ENVIRONMENT} >> ${tmpfile}
+        fi
+else
+        for env_var in ${SUPPORTED_AUTO_ENV_VAR[@]}; do
+            var_name="\${"${env_var}"}"
+            var_value=$(eval "echo ${var_name}")
+            if [[ -n ${var_value} ]]; then
+                echo "export ${env_var}="'"'${var_value}'"' >> ${tmpfile}
+            fi
+        done
+        echo 'export echo PATH="/usr/local/go/bin:/home/public/RND/AFW/ActiveState_2.6/bin:/opt/soldev/devtools/bin:/opt/tools/centos7/svn/1.9.7/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/public/RND/AFW/tools"' >> ${tmpfile}
+
+fi
+ARGS=""
+whitespace="[[:space:]]"
+for ARG in "$@"
+do
+    if [[ $# -eq 1 ]]; then
+        ARGS="$@"
+        break;
+    fi
+    # For other cases use bash -c
+    if [[ $1 == "bash" ]] &&
+       [[ $2 == "-c" ]]; then
+        ARGS="$1 $2 \"${@:3}\""
+        break;
+    fi
+    # Special Cases
+    if [[ ${ARG:0:1} == "&" ]] ||
+       [[ ${ARG} =~ " && " ]] ||
+       [[ ${ARG} =~ " || " ]] ||
+       [[ ${ARG:0:2} == "2>" ]] ||
+       [[ ${ARG:0:2} == "1>" ]] ||
+       [[ ${ARG:0:1} == ">" ]] ||
+       [[ ${ARG:0:1} == "<" ]] ||
+       [[ ${ARG:0:1} == "|" ]] ||
+       [[ ${ARG:0:1} == ";" ]]
+    then
+       ARGS="$ARGS $ARG"
+    else if [[ ${ARG} =~ "=" ]] && ! [[ ${ARG%=*} =~ $whitespace ]]
+        then
+            ARGS="$ARGS ${ARG%=*}=\"${ARG#*=}\""
+        else
+            # Escape any \
+            ARG="${ARG//\\/\\\\}"
+            ARGS="$ARGS \"${ARG//\"/\\\"}\""
+        fi
+    fi
+done
+echo ${ARGS} >> ${tmpfile}
+chmod 777 ${tmpfile}
+
+origfile=/tmp/$(basename ${tmpfile})
+
+if [[ $# -ne 0 ]]; then
+	COMMANDS=" --noprofile --norc -c '${origfile}'"
+fi
+
+grep "$(id -u -n):.*$(id -u):$(id -g)" /etc/passwd > /dev/null && RUN_DEV_ENV_EXTRA_DOCKER_VOLUMES="$RUN_DEV_ENV_EXTRA_DOCKER_VOLUMES -v /etc/passwd:/etc/passwd"
+grep solgroup /etc/group > /dev/null && RUN_DEV_ENV_EXTRA_DOCKER_VOLUMES="$RUN_DEV_ENV_EXTRA_DOCKER_VOLUMES -v /etc/group:/etc/group"
+
+VOLUMES=${VOLUMES:-"-v /opt/cvsdirs:/opt/cvsdirs -v /opt/sbox:/opt/sbox -v /usr/local/devtools:/usr/local/devtools -v /opt/soldev:/opt/soldev -v /opt/soldev/toolchains/centos7-v7:/opt/soldev/toolchains/centos65-v7/ -v /opt/tools:/opt/tools -v /home:/home -v /etc/krb5.conf:/etc/krb5.conf -v /etc/krb5.keytab:/etc/krb5.keytab -v /etc/krb5.conf.d:/etc/krb5.conf.d -v /etc/nsswitch.conf:/etc/nsswitch.conf -v /opt/fc4-usr-local:/opt/fc4-usr-local -v /etc/sysconfig/authconfig:/etc/sysconfig/authconfig -v=/var/lib/sss/pipes/:/var/lib/sss/pipes/:rw -v /var/spool/postfix:/var/spool/postfix -v ${RUN_DEV_ENV_TMP}:/tmp -v /var/run/docker.sock:/var/run/docker.sock ${RUN_DEV_ENV_EXTRA_DOCKER_VOLUMES}"}
+
+INTERACTIVE_OPT=
+if [[ -t 1 ]]; then
+    CREATE_INTERACTIVE_OPT="-it"
+    INTERACTIVE_OPT="-i"
+    COMMAND="/bin/bash --login ${COMMANDS}"
+else
+    # Always create a tty
+    CREATE_INTERACTIVE_OPT="-t"
+    COMMAND="/bin/bash ${COMMANDS}"
+fi
+
+function termHandler() {
+    if [[ -n ${cname} ]] && [[ $(docker inspect -f '{{.State.Running}}' ${cname}) == "true" ]]; then
+        echo "Signal received: Stopping ${cname}"
+        docker container stop ${cname}
+        cname=""
+    fi
+    if [[ -n ${cname} ]] && [[ $(docker inspect -f '{{.State.Created}}' ${cname}) == "true" ]]; then
+        docker container rm ${cname}
+        cname=""
+    fi
+}
+trap termHandler TERM HUP INT
+
+# Need to add the group of the docker socket to the additional groups
+# # in order to access the docker socket within the container as a non-root user
+DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+
+cname=$(docker create ${CREATE_INTERACTIVE_OPT} --rm --privileged=true \
+        --net=host -u $(id -u):$(id -g) --group-add ${DOCKER_GID} ${VOLUMES} \
+        --env USER=${USER} --env HOME=${HOME} --env DISPLAY="${DISPLAY}" --workdir=${PWD} \
+        ${OL9_EXTRA_DOCKER_OPTIONS} --shm-size=128M \
+        ${OL9_RUN_DEV_ENV_REGISTRY}/${OL9_RUN_DEV_ENV_REPO}:${OL9_RUN_DEV_ENV_KERNEL_REPO_TAG} ${COMMAND})
+
+(trap termHandler TERM HUP INT; sleep 1; while [[ -n $(docker ps -q -f id=${cname}) ]]; do sleep 1; done; ) &
+
+docker start -a ${INTERACTIVE_OPT} ${cname}; ret=$?
+
+rm "${tmpfile}"
+
+exit ${ret}
