@@ -123,6 +123,7 @@ SUPPORTED_AUTO_ENV_VAR=(
                   "GIT_AUTHOR_EMAIL"
                   "SVN_REVISION"
                   "SVN_URL"
+                  "PATH"
                   )
 
 echo "#!/bin/bash" > ${tmpfile}
@@ -143,7 +144,6 @@ else
                 echo "export ${env_var}="'"'${var_value}'"' >> ${tmpfile}
             fi
         done
-        echo 'export echo PATH="/usr/local/go/bin:/home/public/RND/AFW/ActiveState_2.6/bin:/opt/soldev/devtools/bin:/opt/tools/centos7/svn/1.9.7/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/public/RND/AFW/tools"' >> ${tmpfile}
 
 fi
 ARGS=""

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 COMPILER_PATH=${COMPILER_PATH:-"/opt/gcc-7.3.0-x86_64/bin"}
 PATH=${COMPILER_PATH}:$PATH
@@ -49,10 +49,10 @@ if [ -n "$BUILD_NUMBER" ] ; then
     echo "Copying kernel to $LOAD_DIR/$NEW_VERSION"
     cp -diR "$OLD_PWD/." "$LOAD_DIR/$NEW_VERSION" || exit 1
     cd "$LOAD_DIR/$NEW_VERSION" || exit 1
-    make -C "$LOAD_DIR/$NEW_VERSION" ARCH=x86_64 $@
+    ./build-env/run-dev-env-ol9-kernel make -C "$LOAD_DIR/$NEW_VERSION" ARCH=x86_64 $@
     RC=$?
 else
-    make ARCH=x86_64 $@
+    ./build-env/run-dev-env-ol9-kernel make ARCH=x86_64 $@
     RC=$?
 fi
 
