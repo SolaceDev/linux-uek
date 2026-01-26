@@ -33,6 +33,11 @@ function setVersion
     NEW_BUILD_ID=$(( ${LAST_BUILD_ID} + 1 ))
     NEW_VERSION=$VERSION.solos$NEW_BUILD_ID
     echo NEW_VERSION is $NEW_VERSION
+
+    # Export NEW_VERSION so Jenkins can use it for git tagging
+    export NEW_VERSION
+    echo "NEW_VERSION=$NEW_VERSION" > /tmp/kernel_version.env
+
     mv -f .config old.config
     sed -e "s/^CONFIG_LOCALVERSION=.*\$/CONFIG_LOCALVERSION=\".solos$NEW_BUILD_ID\"/" <old.config >.config
 }
@@ -40,17 +45,10 @@ function setVersion
 echo "Publish Location is $LOAD_DIR"
 setVersion
 
-  if [ -n "$BUILD_NUMBER" ] ; then
-      echo "=== SSH Agent Debug ==="
-      echo "SSH_AUTH_SOCK: $SSH_AUTH_SOCK"
-      echo "SSH_AGENT_PID: $SSH_AGENT_PID"
-      ssh-add -l || echo "No SSH keys loaded!"
-      echo "Git remote:"
-      git remote -v
-      echo "======================="
+if [ -n "$BUILD_NUMBER" ] ; then
+    # NOTE: Git tag/push operations are now handled by Jenkins BEFORE running this script
+    # This is because this script runs inside a Docker container which doesn't have SSH Agent access
 
-      git tag -a v$NEW_VERSION -m "Incrementing build number to solos$NEW_BUILD_ID before the build"
-      git push origin v$NEW_VERSION
     mkdir -p $LOAD_DIR
     mkdir "$LOAD_DIR/$NEW_VERSION" || exit 1
     OLD_PWD="$PWD"
