@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 COMPILER_PATH=${COMPILER_PATH:-"/opt/gcc-7.3.0-x86_64/bin"}
 PATH=${COMPILER_PATH}:$PATH
@@ -40,9 +40,17 @@ function setVersion
 echo "Publish Location is $LOAD_DIR"
 setVersion
 
-if [ -n "$BUILD_NUMBER" ] ; then
-    git tag -a v$NEW_VERSION -m "Incrementing build number to solos$NEW_BUILD_ID before the build"
-    git push origin v$NEW_VERSION
+  if [ -n "$BUILD_NUMBER" ] ; then
+      echo "=== SSH Agent Debug ==="
+      echo "SSH_AUTH_SOCK: $SSH_AUTH_SOCK"
+      echo "SSH_AGENT_PID: $SSH_AGENT_PID"
+      ssh-add -l || echo "No SSH keys loaded!"
+      echo "Git remote:"
+      git remote -v
+      echo "======================="
+
+      git tag -a v$NEW_VERSION -m "Incrementing build number to solos$NEW_BUILD_ID before the build"
+      git push origin v$NEW_VERSION
     mkdir -p $LOAD_DIR
     mkdir "$LOAD_DIR/$NEW_VERSION" || exit 1
     OLD_PWD="$PWD"
