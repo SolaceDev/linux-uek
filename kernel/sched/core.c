@@ -7641,19 +7641,21 @@ EXPORT_SYMBOL(io_schedule);
 static inline bool
 state_filter_match(unsigned long state_filter, struct task_struct *p)
 {
+	unsigned int state = READ_ONCE(p->__state);
+
 	/* no filter, everything matches */
 	if (!state_filter)
 		return true;
 
 	/* filter, but doesn't match */
-	if (!(p->__state & state_filter))
+	if (!(state & state_filter))
 		return false;
 
 	/*
 	 * When looking for TASK_UNINTERRUPTIBLE skip TASK_IDLE (allows
 	 * TASK_KILLABLE).
 	 */
-	if (state_filter & TASK_UNINTERRUPTIBLE && p->__state & TASK_IDLE)
+	if (state_filter & TASK_UNINTERRUPTIBLE && state & TASK_IDLE)
 		return false;
 
 	return true;
