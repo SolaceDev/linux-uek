@@ -59,14 +59,6 @@ static ssize_t name##_list_read(struct file *file, struct kobject *kobj,	\
 }
 
 define_id_show_func(physical_package_id, "%d");
-
-#define define_siblings_show_map_limited(name, mask)				\
-static ssize_t name##_show(struct device *dev,				\
-			   struct device_attribute *attr, char *buf)	\
-{									\
-	return cpumap_print_to_pagebuf_32bit(false, buf, topology_##mask(dev->id));\
-}
-
 static DEVICE_ATTR_RO(physical_package_id);
 
 #ifdef TOPOLOGY_DIE_SYSFS
