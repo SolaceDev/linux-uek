@@ -224,6 +224,9 @@ extern struct dentry *__d_lookup(const struct dentry *, const struct qstr *);
 extern struct dentry *__d_lookup_rcu(const struct dentry *parent,
 				const struct qstr *name, unsigned *seq);
 extern void d_genocide(struct dentry *);
+extern ssize_t do_loop_readv_writev(struct file *filp, struct iov_iter *iter,
+                loff_t *ppos, int type, rwf_t flags);
+
 
 /*
  * pipe.c

@@ -7638,7 +7638,31 @@ void __sched io_schedule(void)
 }
 EXPORT_SYMBOL(io_schedule);
 
-void sched_show_task(struct task_struct *p)
+static inline bool
+state_filter_match(unsigned long state_filter, struct task_struct *p)
+{
+	unsigned int state = READ_ONCE(p->__state);
+
+	/* no filter, everything matches */
+	if (!state_filter)
+		return true;
+
+	/* filter, but doesn't match */
+	if (!(state & state_filter))
+		return false;
+
+	/*
+	 * When looking for TASK_UNINTERRUPTIBLE skip TASK_IDLE (allows
+	 * TASK_KILLABLE).
+	 */
+	if (state_filter & TASK_UNINTERRUPTIBLE && state & TASK_IDLE)
+		return false;
+
+	return true;
+}
+
+static void sched_show_task_filter(struct task_struct *p,
+				   unsigned long state_filter)
 {
 	unsigned long free;
 	int ppid;
@@ -7663,36 +7687,20 @@ void sched_show_task(struct task_struct *p)
 	print_worker_info(KERN_INFO, p);
 	print_stop_info(KERN_INFO, p);
 	print_scx_info(KERN_INFO, p);
-	show_stack(p, NULL, KERN_INFO);
-	put_task_stack(p);
+	if (state_filter_match(state_filter,p)) {
+		show_stack(p, NULL, KERN_INFO);
+		put_task_stack(p);
+	}
+}
+
+void sched_show_task(struct task_struct *p)
+{
+    sched_show_task_filter(p, 0);
 }
 EXPORT_SYMBOL_GPL(sched_show_task);
 
-static inline bool
-state_filter_match(unsigned long state_filter, struct task_struct *p)
-{
-	unsigned int state = READ_ONCE(p->__state);
-
-	/* no filter, everything matches */
-	if (!state_filter)
-		return true;
-
-	/* filter, but doesn't match */
-	if (!(state & state_filter))
-		return false;
-
-	/*
-	 * When looking for TASK_UNINTERRUPTIBLE skip TASK_IDLE (allows
-	 * TASK_KILLABLE).
-	 */
-	if (state_filter == TASK_UNINTERRUPTIBLE && (state & TASK_NOLOAD))
-		return false;
-
-	return true;
-}
-
-
-void show_state_filter(unsigned int state_filter)
+void show_state_filter_less_stack(unsigned long state_filter,
+				  unsigned long stack_state_filter)
 {
 	struct task_struct *g, *p;
 
@@ -7708,11 +7716,11 @@ void show_state_filter(unsigned int state_filter)
 		touch_nmi_watchdog();
 		touch_all_softlockup_watchdogs();
 		if (state_filter_match(state_filter, p))
-			sched_show_task(p);
+			sched_show_task_filter(p,stack_state_filter);
 	}
 
 #ifdef CONFIG_SCHED_DEBUG
-	if (!state_filter)
+	if (!state_filter && !stack_state_filter)
 		sysrq_sched_debug_show();
 #endif
 	rcu_read_unlock();
@@ -7721,6 +7729,11 @@ void show_state_filter(unsigned int state_filter)
 	 */
 	if (!state_filter)
 		debug_show_all_locks();
+}
+
+void show_state_filter(unsigned long state_filter)
+{
+	show_state_filter_less_stack(state_filter, 0);
 }
 
 /**

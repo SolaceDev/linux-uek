@@ -271,6 +271,34 @@ TRACE_EVENT(io_uring_cqring_wait,
 	TP_printk("ring %p, min_events %d", __entry->ctx, __entry->min_events)
 );
 
+
+/**
+ * io_uring_cqring_wait_done - called after waiting for a completion event
+ *
+ * @ctx:		pointer to a ring context structure
+ *
+ * Allows to track waiting for CQE, so that we can e.g. troubleshoot
+ * situations, when an application wants to wait for an event, that never
+ * comes.
+ */
+TRACE_EVENT(io_uring_cqring_wait_done,
+
+	TP_PROTO(void *ctx),
+
+	TP_ARGS(ctx),
+
+	TP_STRUCT__entry (
+		__field(  void *,	ctx			)
+	),
+
+	TP_fast_assign(
+		__entry->ctx	= ctx;
+	),
+
+	TP_printk("ring %p", __entry->ctx)
+);
+
+
 /**
  * io_uring_fail_link - called before failing a linked request
  *

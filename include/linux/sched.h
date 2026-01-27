@@ -297,6 +297,16 @@ struct user_event_mm;
 		raw_spin_unlock(&current->pi_lock);			\
 	} while (0);
 
+/*
+ * Only dump TASK_* tasks. (0 for all tasks)
+ */
+extern void show_state_filter(unsigned long state_filter);
+
+extern void show_state_filter_less_stack(unsigned long state_filter,
+					 unsigned long stack_state_filter);
+
+extern void show_regs(struct pt_regs *);
+
 #define get_current_state()	READ_ONCE(current->__state)
 
 /*

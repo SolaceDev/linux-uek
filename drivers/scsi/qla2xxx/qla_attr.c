@@ -164,6 +164,9 @@ qla2x00_sysfs_write_fw_dump(struct file *filp, struct kobject *kobj,
 			ha->isp_ops->mpi_fw_dump(vha, 0);
 		}
 		break;
+	case 11:
+		vha->fake_pause = 1;
+		break;
 	}
 	return count;
 }
