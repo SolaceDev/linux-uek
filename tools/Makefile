@@ -97,8 +97,8 @@ sched_ext: FORCE
 	$(call descend,sched_ext)
 
 perf-rpm: FORCE
-	$(Q)mkdir -p $(PERF_O) .
-	$(Q)$(MAKE) --no-print-directory -C perf-rpm O=$(PERF_O) subdir=
+	$(Q)mkdir -p $(PERF_O)-rpm .
+	$(Q)$(MAKE) --no-print-directory -C perf O=$(PERF_O) subdir=
 
 selftests: FORCE
 	$(call descend,testing/$@)
