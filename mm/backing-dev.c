@@ -71,9 +71,9 @@ static int suppress_b_dirty(struct inode *inode)
 {
 	struct folio_batch fbatch;
 	pgoff_t start = 0;
-	unsigned nr;
+	unsigned i;
 
-	if (inode->i_ino != 0)
+	if (!S_ISBLK(inode->i_mode))
 		return 0;
 	if (!inode->i_mapping)
 		return 0;
@@ -81,21 +81,18 @@ static int suppress_b_dirty(struct inode *inode)
 		return 0;
 
 	folio_batch_init(&fbatch);
-
-	while ((nr = filemap_get_folios(inode->i_mapping, &start, 16, &fbatch)) > 0) {
-		int is_dirty = 0;
-		unsigned i;
-		for (i = 0; i < nr; i++) {
+	while (filemap_get_folios(inode->i_mapping, &start, (pgoff_t)-1, &fbatch)) {
+		for (i = 0; i < folio_batch_count(&fbatch); i++) {
 			struct folio *folio = fbatch.folios[i];
-			if (!folio)
+			if (!folio) {
 				continue;
-			is_dirty |= folio_test_dirty(folio);
-			folio_put(folio);
+			}
+			if (folio_test_dirty(folio)) {
+				folio_batch_release(&fbatch);
+				return 0;
+			}
 		}
 		folio_batch_release(&fbatch);
-
-		if (is_dirty)
-			return 0;
 	}
 
 	/* Check again just in case things changed */
@@ -155,7 +152,6 @@ static void bdi_collect_stats(struct backing_dev_info *bdi,
 	collect_wb_stats(stats, &bdi->wb);
 }
 #endif
-
 static int bdi_debug_stats_show(struct seq_file *m, void *v)
 {
 	struct backing_dev_info *bdi = m->private;
