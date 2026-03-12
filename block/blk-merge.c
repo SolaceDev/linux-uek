@@ -785,9 +785,19 @@ static void blk_rq_set_mixed_merge(struct request *rq)
 	 * Distributes the attributs to each bio.
 	 */
 	for (bio = rq->bio; bio; bio = bio->bi_next) {
-		WARN_ON_ONCE((bio->bi_opf & REQ_FAILFAST_MASK) &&
-			     (bio->bi_opf & REQ_FAILFAST_MASK) != ff);
-		bio->bi_opf |= ff;
+		/*
+		 * RAHEAD bios may have partial failfast flags due to
+		 * bio_failfast() normalization. Update them to match
+		 * the request instead of warning.
+		 */
+		if (bio->bi_opf & REQ_RAHEAD) {
+			bio->bi_opf &= ~REQ_FAILFAST_MASK;
+			bio->bi_opf |= ff;
+		} else {
+			WARN_ON_ONCE((bio->bi_opf & REQ_FAILFAST_MASK) &&
+				     (bio->bi_opf & REQ_FAILFAST_MASK) != ff);
+			bio->bi_opf |= ff;
+		}
 	}
 	rq->rq_flags |= RQF_MIXED_MERGE;
 }
