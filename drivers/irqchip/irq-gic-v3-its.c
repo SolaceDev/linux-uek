@@ -120,6 +120,7 @@ struct its_node {
 	unsigned int		msi_domain_flags;
 	u32			pre_its_base; /* for Socionext Synquacer */
 	int			vlpi_redist_offset;
+	u64			msi_encapsulator;
 };
 
 #define is_v4(its)		(!!((its)->typer & GITS_TYPER_VLPIS))
@@ -619,7 +620,7 @@ static struct its_collection *its_build_mapd_cmd(struct its_node *its,
 						 struct its_cmd_block *cmd,
 						 struct its_cmd_desc *desc)
 {
-	unsigned long itt_addr;
+	phys_addr_t itt_addr;
 	u8 size = ilog2(desc->its_mapd_cmd.dev->nr_ites);
 
 	itt_addr = virt_to_phys(desc->its_mapd_cmd.dev->itt);
@@ -790,7 +791,7 @@ static struct its_vpe *its_build_vmapp_cmd(struct its_node *its,
 					   struct its_cmd_desc *desc)
 {
 	struct its_vpe *vpe = valid_vpe(its, desc->its_vmapp_cmd.vpe);
-	unsigned long vpt_addr, vconf_addr;
+	phys_addr_t vpt_addr, vconf_addr;
 	u64 target;
 	bool alloc;
 
@@ -1719,6 +1720,8 @@ static u64 its_irq_get_msi_base(struct its_device *its_dev)
 {
 	struct its_node *its = its_dev->its;
 
+	if (its->msi_encapsulator)
+		return its->msi_encapsulator;
 	return its->phys_base + GITS_TRANSLATER;
 }
 
@@ -2395,10 +2398,10 @@ retry_baser:
 	baser->psz = psz;
 	tmp = indirect ? GITS_LVL1_ENTRY_SIZE : esz;
 
-	pr_info("ITS@%pa: allocated %d %s @%lx (%s, esz %d, psz %dK, shr %d)\n",
+	pr_info("ITS@%pa: allocated %d %s @%llx (%s, esz %d, psz %dK, shr %d)\n",
 		&its->phys_base, (int)(PAGE_ORDER_TO_SIZE(order) / (int)tmp),
 		its_base_type_string[type],
-		(unsigned long)virt_to_phys(base),
+		(u64)virt_to_phys(base),
 		indirect ? "indirect" : "flat", (int)esz,
 		psz / SZ_1K, (int)shr >> GITS_BASER_SHAREABILITY_SHIFT);
 
@@ -5485,6 +5488,10 @@ static int __init its_of_probe(struct device_node *node)
 		if (err)  {
 			its_node_destroy(its);
 			return err;
+		}
+		if (of_address_to_resource(np, 1, &res) == 0) {
+			its->msi_encapsulator = res.start;
+                        pr_info("its msi encapsulator 0x%llx\n", its->msi_encapsulator);
 		}
 	}
 	return 0;

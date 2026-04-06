@@ -160,6 +160,7 @@ enum {
 	MLX5_REG_MIRC		 = 0x9162,
 	MLX5_REG_MTPTM		 = 0x9180,
 	MLX5_REG_MTCTR		 = 0x9181,
+	MLX5_REG_MRTCQ		 = 0x9182,
 	MLX5_REG_SBCAM		 = 0xB01F,
 	MLX5_REG_RESOURCE_DUMP   = 0xC000,
 	MLX5_REG_NIC_CAP	 = 0xC00D,
@@ -1164,10 +1165,6 @@ bool mlx5_lag_is_shared_fdb(struct mlx5_core_dev *dev);
 bool mlx5_lag_is_mpesw(struct mlx5_core_dev *dev);
 u8 mlx5_lag_get_slave_port(struct mlx5_core_dev *dev,
 			   struct net_device *slave);
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-int mlx5_cmd_query_cong_counter(struct mlx5_core_dev *dev,
-				bool reset, void *out, int out_size);
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
 int mlx5_lag_query_cong_counters(struct mlx5_core_dev *dev,
 				 u64 *values,
 				 int num_counters,

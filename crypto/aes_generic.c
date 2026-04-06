@@ -1133,14 +1133,14 @@ EXPORT_SYMBOL_GPL(crypto_it_tab);
  *
  * Return: 0 on success; -EINVAL on failure (only happens for bad key lengths)
  */
-int crypto_aes_set_key(struct crypto_tfm *tfm, const u8 *in_key,
+int CRYPTO_API(crypto_aes_set_key)(struct crypto_tfm *tfm, const u8 *in_key,
 		unsigned int key_len)
 {
 	struct crypto_aes_ctx *ctx = crypto_tfm_ctx(tfm);
 
 	return aes_expandkey(ctx, in_key, key_len);
 }
-EXPORT_SYMBOL_GPL(crypto_aes_set_key);
+DEFINE_CRYPTO_API(crypto_aes_set_key);
 
 /* encrypt a block of text */
 
@@ -1311,10 +1311,17 @@ static void __exit aes_fini(void)
 	crypto_unregister_alg(&aes_alg);
 }
 
-subsys_initcall(aes_init);
-module_exit(aes_fini);
+crypto_subsys_initcall(aes_init);
+crypto_module_exit(aes_fini);
 
 MODULE_DESCRIPTION("Rijndael (AES) Cipher Algorithm");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_ALIAS_CRYPTO("aes");
 MODULE_ALIAS_CRYPTO("aes-generic");
+
+#ifdef FIPS_MODULE
+#undef EXPORT_SYMBOL
+#define EXPORT_SYMBOL(x)
+
+#include <../lib/crypto/aes.c>
+#endif

@@ -8,6 +8,7 @@
  * SHA-3 code by Jeff Garzik <jeff@garzik.org>
  *               Ard Biesheuvel <ard.biesheuvel@linaro.org>
  */
+#include <crypto/api.h>
 #include <crypto/internal/hash.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -158,7 +159,7 @@ static void keccakf(u64 st[25])
 	}
 }
 
-int crypto_sha3_init(struct shash_desc *desc)
+int CRYPTO_API(crypto_sha3_init)(struct shash_desc *desc)
 {
 	struct sha3_state *sctx = shash_desc_ctx(desc);
 	unsigned int digest_size = crypto_shash_digestsize(desc->tfm);
@@ -170,9 +171,9 @@ int crypto_sha3_init(struct shash_desc *desc)
 	memset(sctx->st, 0, sizeof(sctx->st));
 	return 0;
 }
-EXPORT_SYMBOL(crypto_sha3_init);
+DEFINE_CRYPTO_API(crypto_sha3_init);
 
-int crypto_sha3_update(struct shash_desc *desc, const u8 *data,
+int CRYPTO_API(crypto_sha3_update)(struct shash_desc *desc, const u8 *data,
 		       unsigned int len)
 {
 	struct sha3_state *sctx = shash_desc_ctx(desc);
@@ -208,9 +209,9 @@ int crypto_sha3_update(struct shash_desc *desc, const u8 *data,
 
 	return 0;
 }
-EXPORT_SYMBOL(crypto_sha3_update);
+DEFINE_CRYPTO_API(crypto_sha3_update);
 
-int crypto_sha3_final(struct shash_desc *desc, u8 *out)
+int CRYPTO_API(crypto_sha3_final)(struct shash_desc *desc, u8 *out)
 {
 	struct sha3_state *sctx = shash_desc_ctx(desc);
 	unsigned int i, inlen = sctx->partial;
@@ -235,7 +236,7 @@ int crypto_sha3_final(struct shash_desc *desc, u8 *out)
 	memset(sctx, 0, sizeof(*sctx));
 	return 0;
 }
-EXPORT_SYMBOL(crypto_sha3_final);
+DEFINE_CRYPTO_API(crypto_sha3_final);
 
 static struct shash_alg algs[] = { {
 	.digestsize		= SHA3_224_DIGEST_SIZE,
@@ -289,8 +290,8 @@ static void __exit sha3_generic_mod_fini(void)
 	crypto_unregister_shashes(algs, ARRAY_SIZE(algs));
 }
 
-subsys_initcall(sha3_generic_mod_init);
-module_exit(sha3_generic_mod_fini);
+crypto_subsys_initcall(sha3_generic_mod_init);
+crypto_module_exit(sha3_generic_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SHA-3 Secure Hash Algorithm");

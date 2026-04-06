@@ -17,6 +17,7 @@
  * Copyright 2024 Google LLC
  */
 
+#include <crypto/api.h>
 #include <linux/hardirq.h>
 #include <linux/types.h>
 #include <linux/module.h>
@@ -1668,7 +1669,7 @@ static const struct x86_cpu_id aesni_cpu_id[] = {
 	X86_MATCH_FEATURE(X86_FEATURE_AES, NULL),
 	{}
 };
-MODULE_DEVICE_TABLE(x86cpu, aesni_cpu_id);
+CRYPTO_MODULE_DEVICE_TABLE(x86cpu, aesni_cpu_id);
 
 static int __init aesni_init(void)
 {
@@ -1747,8 +1748,8 @@ static void __exit aesni_exit(void)
 	unregister_avx_algs();
 }
 
-late_initcall(aesni_init);
-module_exit(aesni_exit);
+crypto_late_initcall(aesni_init);
+crypto_module_exit(aesni_exit);
 
 MODULE_DESCRIPTION("AES cipher and modes, optimized with AES-NI or VAES instructions");
 MODULE_LICENSE("GPL");

@@ -833,10 +833,6 @@ struct task_struct {
 	unsigned int			flags;
 	unsigned int			ptrace;
 
-#ifdef CONFIG_MEM_ALLOC_PROFILING
-	struct alloc_tag		*alloc_tag;
-#endif
-
 #ifdef CONFIG_SMP
 	int				on_cpu;
 	struct __call_single_node	wake_entry;
@@ -1590,7 +1586,12 @@ struct task_struct {
 	unsigned long			prev_lowest_stack;
 #endif
 
+#ifdef CONFIG_MEM_ALLOC_PROFILING
+	UEK_KABI_USE(1, struct alloc_tag *alloc_tag)
+#else
 	UEK_KABI_RESERVE(1)
+#endif
+
 	UEK_KABI_RESERVE(2)
 	UEK_KABI_RESERVE(3)
 	UEK_KABI_RESERVE(4)
@@ -1782,6 +1783,11 @@ static __always_inline bool is_percpu_thread(void)
 #else
 	return true;
 #endif
+}
+
+static __always_inline bool is_user_task(struct task_struct *task)
+{
+	return task->mm && !(task->flags & (PF_KTHREAD | PF_USER_WORKER));
 }
 
 /* Per-process atomic flags. */

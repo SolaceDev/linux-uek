@@ -1,5 +1,7 @@
 modules-core:
 - 8021q
+- 842_compress
+- 842_decompress
 - acpi_ipmi
 - acpi_tad
 - act_bpf
@@ -72,7 +74,6 @@ modules-core:
 - crc-itu-t
 - crc32_generic
 - crc7
-- cryptd
 - crypto_engine
 - crypto_user
 - cuse
@@ -173,6 +174,7 @@ modules-core:
 - ifb
 - igb
 - ionic
+- ionic_rdma
 - ip6_gre
 - ip6_tables
 - ip6_tunnel
@@ -461,7 +463,6 @@ modules-core:
 - tcp_nv
 - tcrypt
 - tea
-- tee
 - tls
 - ts_bm
 - ts_fsm
@@ -545,13 +546,11 @@ modules-core:
 - aes-neon-bs
 - arm_dmc620_pmu
 - arm_spe_pmu
-- asn1_encoder
 - backlight
 - button
 - chacha-neon
 - cppc_cpufreq
 - crct10dif-ce
-- ecdh_generic
 - ffa-core
 - ffa-module
 - ghash-ce
@@ -572,7 +571,6 @@ modules-core:
 - tag_qca
 - tpm_tis
 - tpm_tis_core
-- trusted
 - xgene-hwmon
 - xor-neon
 #endif /* Arch_aarch64 */
@@ -598,7 +596,6 @@ modules-core:
 - crc32-pclmul
 - crc8
 - crct10dif-pclmul
-- crypto_simd
 - curve25519-x86_64
 - dax_hmem
 - dax_pmem
@@ -672,6 +669,7 @@ modules-core:
 - skx_edac
 - skx_edac_common
 - sr_mod
+- tee
 - twofish-avx-x86_64
 - twofish-x86_64
 - twofish-x86_64-3way

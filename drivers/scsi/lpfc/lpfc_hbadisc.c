@@ -424,6 +424,7 @@ lpfc_check_nlp_post_devloss(struct lpfc_vport *vport,
 			    struct lpfc_nodelist *ndlp)
 {
 	if (test_and_clear_bit(NLP_IN_RECOV_POST_DEV_LOSS, &ndlp->save_flags)) {
+		clear_bit(NLP_DROPPED, &ndlp->nlp_flag);
 		lpfc_nlp_get(ndlp);
 		lpfc_printf_vlog(vport, KERN_INFO, LOG_DISCOVERY | LOG_NODE,
 				 "8438 Devloss timeout reversed on DID x%x "
@@ -566,7 +567,8 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
 			return fcf_inuse;
 		}
 
-		lpfc_nlp_put(ndlp);
+		if (!test_and_set_bit(NLP_DROPPED, &ndlp->nlp_flag))
+			lpfc_nlp_put(ndlp);
 		return fcf_inuse;
 	}
 
@@ -1267,6 +1269,10 @@ lpfc_linkdown(struct lpfc_hba *phba)
 	}
 	phba->defer_flogi_acc.flag = false;
 
+	/* reinitialize initial HBA flag */
+	clear_bit(HBA_FLOGI_ISSUED, &phba->hba_flag);
+	clear_bit(HBA_RHBA_CMPL, &phba->hba_flag);
+
 	/* Clear external loopback plug detected flag */
 	phba->link_flag &= ~LS_EXTERNAL_LOOPBACK;
 
@@ -1436,10 +1442,6 @@ lpfc_linkup(struct lpfc_hba *phba)
 	spin_lock_irq(shost->host_lock);
 	phba->pport->rcv_flogi_cnt = 0;
 	spin_unlock_irq(shost->host_lock);
-
-	/* reinitialize initial HBA flag */
-	clear_bit(HBA_FLOGI_ISSUED, &phba->hba_flag);
-	clear_bit(HBA_RHBA_CMPL, &phba->hba_flag);
 
 	return 0;
 }
@@ -3527,7 +3529,7 @@ lpfc_mbx_process_link_up(struct lpfc_hba *phba, struct lpfc_mbx_read_top *la)
 	if (phba->fc_topology &&
 	    phba->fc_topology != bf_get(lpfc_mbx_read_top_topology, la)) {
 		lpfc_printf_log(phba, KERN_WARNING, LOG_SLI,
-				"3314 Toplogy changed was 0x%x is 0x%x\n",
+				"3314 Topology changed was 0x%x is 0x%x\n",
 				phba->fc_topology,
 				bf_get(lpfc_mbx_read_top_topology, la));
 		phba->fc_topology_changed = 1;
@@ -4371,6 +4373,8 @@ out:
 		lpfc_ns_cmd(vport, SLI_CTNS_RNN_ID, 0, 0);
 		lpfc_ns_cmd(vport, SLI_CTNS_RSNN_NN, 0, 0);
 		lpfc_ns_cmd(vport, SLI_CTNS_RSPN_ID, 0, 0);
+		if (phba->pni)
+			lpfc_ns_cmd(vport, SLI_CTNS_RSPNI_PNI, 0, 0);
 		lpfc_ns_cmd(vport, SLI_CTNS_RFT_ID, 0, 0);
 
 		if ((vport->cfg_enable_fc4_type == LPFC_ENABLE_BOTH) ||
@@ -4698,9 +4702,7 @@ lpfc_nlp_unreg_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 	if (ndlp->fc4_xpt_flags & NVME_XPT_REGD) {
 		vport->phba->nport_event_cnt++;
 		if (vport->phba->nvmet_support == 0) {
-			/* Start devloss if target. */
-			if (ndlp->nlp_type & NLP_NVME_TARGET)
-				lpfc_nvme_unregister_port(vport, ndlp);
+			lpfc_nvme_unregister_port(vport, ndlp);
 		} else {
 			/* NVMET has no upcall. */
 			lpfc_nlp_put(ndlp);
@@ -4982,7 +4984,7 @@ lpfc_set_disctmo(struct lpfc_vport *vport)
 			tmo, vport->port_state, vport->fc_flag);
 	}
 
-	mod_timer(&vport->fc_disctmo, jiffies + msecs_to_jiffies(1000 * tmo));
+	mod_timer(&vport->fc_disctmo, jiffies + secs_to_jiffies(tmo));
 	set_bit(FC_DISC_TMO, &vport->fc_flag);
 
 	/* Start Discovery Timer state <hba_state> */

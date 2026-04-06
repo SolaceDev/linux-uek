@@ -20,6 +20,8 @@ Summary: Oracle Unbreakable Enterprise Kernel Release
 %endif
 %define ol_release_name Oracle Linux %{oraclelinux}
 
+%define fips_name Oracle Linux Unbreakable Enterprise Kernel (UEK %{uek_release}) FIPS Cryptographic Module
+
 # identify the toolchain to use
 %define uek_toolset gcc-toolset-14
 
@@ -108,6 +110,8 @@ Summary: Oracle Unbreakable Enterprise Kernel Release
 %define with_doc       1
 # kernel-headers
 %define with_headers   1
+# fips-module
+%define with_fips_build 1
 # bpftools
 %define with_bpftool   1
 # tools
@@ -121,6 +125,15 @@ Summary: Oracle Unbreakable Enterprise Kernel Release
 #build kernel with 4k & 64k page size for aarch64
 %define with_64k_ps %{?_with_64k_ps: %{_with_64k_ps}} %{?!_with_64k_ps: 0}
 %define with_64k_ps_debug %{?_with_64k_ps_debug: %{_with_64k_ps_debug}} %{?!_with_64k_ps_debug: 0}
+
+# build an embedded kernel
+%define with_embedded %{?_without_embedded: 0} %{?!_without_embedded: 1}
+%define with_embedded3 %{?_without_embedded: 0} %{?!_without_embedded: 1}
+%define with_embedded4 %{?_without_embedded: 0} %{?!_without_embedded: 1}
+
+# build the ONOS kernel
+%define with_onos %{?_without_onos: 0} %{?!_without_onos: 1}
+
 # verbose build, i.e. no silent rules and V=1
 %define with_verbose %{?_with_verbose:        1} %{?!_with_verbose:      0}
 
@@ -158,6 +171,12 @@ Summary: Oracle Unbreakable Enterprise Kernel Release
 
 # Only build the 64k page size kernel (--with 64konly):
 %define with_64konly    %{?_with_64konly:      1} %{?!_with_64konly:      0}
+
+# Only build the embedded kernel (--with embeddedonly)
+%define with_embeddedonly %{?_with_embeddedonly: 1} %{?!_with_embeddedonly: 0}
+
+# Only build the ONOS kernel (--with onosonly)
+%define with_onosonly %{?_with_onosonly: 1} %{?!_with_onosonly: 0}
 
 # should we do C=1 builds with sparse
 %define with_sparse     %{?_with_sparse:       1} %{?!_with_sparse:       0}
@@ -234,6 +253,10 @@ Summary: Oracle Unbreakable Enterprise Kernel Release
 %define with_debug 0
 %define with_64k_ps 0
 %define with_64k_ps_debug 0
+%define with_embedded 0
+%define with_embedded3 0
+%define with_embedded4 0
+%define with_onos 0
 %endif
 
 %define all_x86 i386 i686
@@ -250,10 +273,17 @@ Summary: Oracle Unbreakable Enterprise Kernel Release
 %define with_debug 0
 %endif
 
-# don't do 4k/64k page size kernels for arch except aarch64
+# don't do 4k/64k page size or embedded kernels for arch except aarch64
 %ifnarch aarch64
 %define with_64k_ps       0
 %define with_64k_ps_debug 0
+%define with_embedded 0
+%define with_embedded3 0
+%define with_embedded4 0
+%endif
+
+%ifnarch x86_64
+%define with_onos 0
 %endif
 
 # only package docs noarch
@@ -299,6 +329,14 @@ Summary: Oracle Unbreakable Enterprise Kernel Release
 # by the bootloader.
 #
 %define container_cflags       EXTRA_CFLAGS="-Wa,-mx86-used-note=no"
+%elif %{with_onosonly}
+%define with_up 0
+%define with_container 0
+%define with_debug 0
+%define with_headers 0
+%define with_bpftool 0
+%define with_tools 0
+%define with_onos 1
 %endif
 %endif
 
@@ -323,9 +361,25 @@ Summary: Oracle Unbreakable Enterprise Kernel Release
 %define with_headers 0
 %define with_bpftool 0
 %define with_tools 0
+%define with_embedded 0
+%define with_embedded3 0
+%define with_embedded4 0
+%else
+%if %{with_embeddedonly}
+%define with_up 0
+%define with_container 0
+%define with_64k_ps 0
+%define with_debug 0
+%define with_headers 0
+%define with_bpftool 0
+%define with_tools 0
+%define with_embedded 1
+%define with_embedded3 1
+%define with_embedded4 1
 %else
 %define with_headers 1
 %define with_bpftool 1
+%endif
 %endif
 %endif
 
@@ -430,6 +484,16 @@ BuildRequires: slang-devel
 BuildRequires: sparse >= 0.4.1
 %endif
 
+%global GOLDEN_VERSION 6.12.0-100.28.2.fipsdracut.el9uek.v1
+%global FIPS140_HMAC_KEY Sphinx of black quartz, judge my vow
+%if !%{with_fips_build}
+%if %{with_debug}
+BuildRequires: kernel%{?variant}-debug-fips-build-support = %{GOLDEN_VERSION}
+%else
+BuildRequires: kernel%{?variant}-fips-build-support = %{GOLDEN_VERSION}
+%endif
+%endif
+
 %ifarch x86_64 aarch64
 BuildRequires: libcap-devel
 %endif
@@ -501,6 +565,14 @@ Source43: generate_bls_conf.sh
 Source44: filter-modules.py
 Source45: modules.yaml.S
 Source46: denylist.txt.S
+Source47: modules.yaml.S.emb4
+Source48: denylist.txt.S.emb4
+Source49: modules.yaml.S.emb
+Source50: denylist.txt.S.emb
+Source51: modules.yaml.S.emb3
+Source52: denylist.txt.S.emb3
+Source53: modules.yaml.S.onos
+Source54: denylist.txt.S.onos
 
 Source1000: config-x86_64
 Source1001: config-x86_64-debug
@@ -508,21 +580,25 @@ Source1002: config-x86_64-container
 Source1007: config-aarch64
 Source1008: config-aarch64-debug
 Source1009: config-aarch64-container
+Source1011: config-aarch64-embedded4
+Source1012: config-aarch64-embedded
+Source1013: config-aarch64-embedded3
+Source1014: config-x86_64-onos
 
-Source25: Module.kabi_x86_64debug
-Source26: Module.kabi_x86_64
-Source27: Module.kabi_aarch64debug
-Source28: Module.kabi_aarch64
-Source29: Symtypes.kabi_x86_64debug
-Source30: Symtypes.kabi_x86_64
-Source31: Symtypes.kabi_aarch64debug
-Source32: Symtypes.kabi_aarch64
-Source33: kabi
+Source25: Module.kabi_x86_64
+Source26: Module.kabi_aarch64
+Source27: Symtypes.kabi_x86_64
+Source28: Symtypes.kabi_aarch64
+Source29: kabi
+Source30: Module.kabi_x86_64.fips
+Source31: Module.kabi_aarch64.fips
+Source32: Symtypes.kabi_x86_64.fips
+Source33: Symtypes.kabi_aarch64.fips
 
-Source200: kabi_lockedlist_x86_64debug
 Source201: kabi_lockedlist_x86_64
-Source202: kabi_lockedlist_aarch64debug
-Source203: kabi_lockedlist_aarch64
+Source202: kabi_lockedlist_aarch64
+Source203: kabi_lockedlist_x86_64.fips
+Source204: kabi_lockedlist_aarch64.fips
 
 %if "kernel%{?variant}" != "%{installonly_variant_name}"
 Provides: %{installonly_variant_name}
@@ -578,6 +654,17 @@ Group: Development/System
 AutoReq: no
 %description  -n kernel%{variant}-container-debug
 Container kernel config file and System.map
+%endif
+
+%if %{with_fips_build}
+%define kernel_buildsupport_package(o) \
+%define variant_name kernel%{?variant}%{?1:%{!-o:-}%{1}}\
+%package -n %{variant_name}-fips-build-support\
+Summary: Debug information for package %{variant_name}\
+Group: Development/Debug\
+AutoReqProv: no\
+%description -n %{variant_name}-fips-build-support\
+This package is only for building fips module
 %endif
 
 %if %{with_headers}
@@ -774,9 +861,10 @@ This package provides less commonly used kernel modules for the %{variant_name}-
 #
 # This macro creates a kernel%%{?variant}-<subpackage>-modules package.
 #       %%kernel_modules_package [-o] <subpackage>
+# -e flag denotes embedded kernels, skips the dependency on linux-firmware
 # -o flag omits the hyphen preceding <subpackage> in the package name
 #
-%define kernel_modules_package(o) \
+%define kernel_modules_package(eo) \
 %define variant_name kernel%{?variant}%{?1:%{!-o:-}%{1}}\
 %package -n %{variant_name}-modules\
 Summary: kernel modules to match the %{variant_name}-core kernel\
@@ -786,7 +874,9 @@ Provides: %{variant_name}-modules = %{version}-%{release}%{?1:.%{1}}\
 Provides: installonlypkg(%{installonly_variant_name}-modules)\
 Provides: %{variant_name}-modules-uname-r = %{KVERREL}%{?1:.%{1}}\
 Requires: %{variant_name}-modules-core-uname-r = %{KVERREL}%{?1:.%{1}}\
+%if 0%{!?-e:1}\
 Requires: linux-firmware >= 999:20250203-999.38.git0fd450ee\
+%endif\
 AutoReq: no\
 AutoProv: yes\
 %description -n %{variant_name}-modules\
@@ -796,9 +886,10 @@ This package provides commonly used kernel modules for the %{variant_name}-core 
 #
 # This macro creates a kernel%%{?variant}-<subpackage>-modules-core package.
 #       %%kernel_modules_core_package [-o] <subpackage>
+# -e flag denotes embedded kernels, skips the dependency on linux-firmware
 # -o flag omits the hyphen preceding <subpackage> in the package name
 #
-%define kernel_modules_core_package(o) \
+%define kernel_modules_core_package(eo) \
 %define variant_name kernel%{?variant}%{?1:%{!-o:-}%{1}}\
 %package -n %{variant_name}-modules-core\
 Summary: Core kernel modules to match the %{variant_name}-core kernel\
@@ -808,7 +899,9 @@ Provides: %{variant_name}-modules-core = %{version}-%{release}%{?1:.%{1}}\
 Provides: installonlypkg(%{installonly_variant_name}-modules-core)\
 Provides: %{variant_name}-modules-core-uname-r = %{KVERREL}%{?1:.%{1}}\
 Requires: %{variant_name}-core-uname-r = %{KVERREL}%{?1:.%{1}}\
+%if 0%{!?-e:1}\
 Requires: linux-firmware-core >= 999:20250203-999.38.git0fd450ee\
+%endif\
 Requires: libdnf >= 0.69.0-6.0.2\
 AutoReq: no\
 AutoProv: yes\
@@ -842,13 +935,15 @@ The meta-package for the %{1} kernel.\
 # This macro creates a kernel%%{?variant}-<subpackage> and its -devel and -debuginfo too.
 #       %%define variant_summary The Linux kernel compiled for <configuration>
 #       %%kernel_variant_package [-o] <subpackage>
+# -e flag denotes embedded kernels, skips the dependency on linux-firmware
 # -o flag omits the hyphen preceding <subpackage> in the package name
 #
-%define kernel_variant_package(o) \
+%define kernel_variant_package(eo) \
 %define variant_name kernel%{?variant}%{?1:%{!-o:-}%{1}}\
 %package -n %{variant_name}-core\
 Summary: %{variant_summary}\
 Group: System Environment/Kernel\
+Requires: dracut-uek-fips >= 20250701\
 Provides: %{variant_name}-core-uname-r = %{KVERREL}%{?1:.%{1}}\
 Provides: installonlypkg(%{installonly_variant_name}-core)\
 %ifarch x86_64\
@@ -861,8 +956,8 @@ Provides: kernel-ueknano = %{KVERREL}%{?1:.%{1}}\
 %{expand:%%kernel_meta_package %{-o:%{-o}} %{?1:%{1}}}\
 %endif\
 %{expand:%%kernel_devel_package %{-o:%{-o}} %{?1:%{1}}}\
-%{expand:%%kernel_modules_package %{-o:%{-o}} %{?1:%{1}}}\
-%{expand:%%kernel_modules_core_package %{-o:%{-o}} %{?1:%{1}}}\
+%{expand:%%kernel_modules_package %{?-e:-e} %{-o:%{-o}} %{?1:%{1}}}\
+%{expand:%%kernel_modules_core_package %{?-e:-e} %{-o:%{-o}} %{?1:%{1}}}\
 %{expand:%%kernel_modules_extra_package %{-o:%{-o}} -s extra %{?1:%{1}}}\
 %{expand:%%kernel_modules_extra_package %{-o:%{-o}} -s desktop %{?1:%{1}}}\
 %{expand:%%kernel_modules_extra_package %{-o:%{-o}} -s deprecated %{?1:%{1}}}\
@@ -870,6 +965,7 @@ Provides: kernel-ueknano = %{KVERREL}%{?1:.%{1}}\
 %{expand:%%kernel_modules_extra_package %{-o:%{-o}} -s usb %{?1:%{1}}}\
 %{expand:%%kernel_modules_extra_package %{-o:%{-o}} -s wireless %{?1:%{1}}}\
 %{expand:%%kernel_debuginfo_package %{-o:-o} %{?1:%{1}}}\
+%{expand:%%kernel_buildsupport_package %{-o:-o} %{?1:%{1}}}\
 %{nil}
 
 # Now, each variant package.
@@ -882,6 +978,26 @@ This package includes 64k page size for aarch64 kernel.
 %kernel_variant_package -o 64kdebug
 %description -n kernel%{?variant}64kdebug-core
 This package include debug kernel for 64k page size.
+
+%define variant_summary A kernel for an embedded platform
+%kernel_variant_package -eo emb4
+%description -n kernel%{?variant}emb4-core
+This package includes an embedded kernel.
+
+%define variant_summary A kernel for an embedded platform
+%kernel_variant_package -eo emb3
+%description -n kernel%{?variant}emb3-core
+This package includes an embedded kernel.
+
+%define variant_summary A kernel for an embedded platform
+%kernel_variant_package -eo emb
+%description -n kernel%{?variant}emb-core
+This package includes an embedded kernel.
+
+%define variant_summary A kernel for an ONOS platform
+%kernel_variant_package -eo onos
+%description -n kernel%{?variant}onos-core
+This package includes an ONOS  kernel
 
 %define variant_summary The Linux kernel compiled with extra debugging enabled
 %kernel_variant_package debug
@@ -944,12 +1060,16 @@ mkdir -p configs
     cp %{SOURCE1002} configs/config-container
     cp %{SOURCE1001} configs/config-debug
     cp %{SOURCE1000} configs/config
+    cp %{SOURCE1014} configs/config-onos
 %endif
 
 %ifarch aarch64
     cp %{SOURCE1009} configs/config-container
     cp %{SOURCE1008} configs/config-debug
     cp %{SOURCE1007} configs/config
+    cp %{SOURCE1011} configs/config-embedded4
+    cp %{SOURCE1012} configs/config-embedded
+    cp %{SOURCE1013} configs/config-embedded3
 %endif
 
 echo 'CONFIG_DTRACE=y' >> configs/config
@@ -959,7 +1079,8 @@ echo 'CONFIG_DTRACE=y' >> configs/config-debug
 %ifarch aarch64 x86_64
 for i in configs/config*; do
   sed -i 's/CONFIG_CRYPTO_FIPS_NAME="_FIPS_CONTAINER_KERNEL_"/CONFIG_CRYPTO_FIPS_NAME="%{ol_release_name} Container Kernel Cryptographic Module for %{uek_release_name}"/' $i
-  sed -i 's/CONFIG_CRYPTO_FIPS_NAME="_FIPS_KERNEL_"/CONFIG_CRYPTO_FIPS_NAME="%{ol_release_name} %{uek_release_name_full} Crypto API"/' $i
+  sed -i 's/CONFIG_CRYPTO_FIPS_NAME="_FIPS_KERNEL_"/CONFIG_CRYPTO_FIPS_NAME="%{fips_name}"/' $i
+  sed -i 's/\(CONFIG_CRYPTO_FIPS140_HMAC_KEY\)="_FIPS_HMAC_KEY_"/\1="%{FIPS140_HMAC_KEY}"/' $i
 done
 %endif
 
@@ -1090,28 +1211,100 @@ BuildKernel() {
     if [ "$Flavour" == "debug" ]; then
         cp configs/config-debug .config
         modlistVariant="$PWD/../kernel%{?variant}-debug"
+        modlistSrc=modules.yaml.S
+        denylistSrc=denylist.txt.S
     elif [ "$Flavour" == "64k" ]; then
         sed -i '/^CONFIG_ARM64_[0-9]\+K_PAGES=/d' configs/config
         echo 'CONFIG_ARM64_64K_PAGES=y' >> configs/config
         cp configs/config .config
         modlistVariant="$PWD/../kernel%{?variant}64k"
+        modlistSrc=modules.yaml.S
+        denylistSrc=denylist.txt.S
     elif [ "$Flavour" == "64kdebug" ]; then
         sed -i '/^CONFIG_ARM64_[0-9]\+K_PAGES=/d' configs/config-debug
         echo 'CONFIG_ARM64_64K_PAGES=y' >> configs/config-debug
         cp configs/config-debug .config
         modlistVariant="$PWD/../kernel%{?variant}64kdebug"
+        modlistSrc=modules.yaml.S
+        denylistSrc=denylist.txt.S
+    elif [ "$Flavour" == "emb4" ]; then
+        cp configs/config-embedded4 .config
+        modlistVariant="$PWD/../kernel%{?variant}emb4"
+        modlistSrc=modules.yaml.S.emb4
+        denylistSrc=denylist.txt.S.emb4
+    elif [ "$Flavour" == "emb3" ]; then
+        cp configs/config-embedded3 .config
+        modlistVariant="$PWD/../kernel%{?variant}emb3"
+        modlistSrc=modules.yaml.S.emb3
+        denylistSrc=denylist.txt.S.emb3
+    elif [ "$Flavour" == "emb" ]; then
+        cp configs/config-embedded .config
+        modlistVariant="$PWD/../kernel%{?variant}emb"
+        modlistSrc=modules.yaml.S.emb
+        denylistSrc=denylist.txt.S.emb
+    elif [ "$Flavour" == "onos" ]; then
+        cp configs/config-onos .config
+        modlistVariant="$PWD/../kernel%{?variant}onos"
+        modlistSrc=modules.yaml.S.onos
+        denylistSrc=denylist.txt.S.onos
     else
         cp configs/config .config
         modlistVariant="$PWD/../kernel%{?variant}${Flavour:+-${Flavour}}"
+        modlistSrc=modules.yaml.S
+        denylistSrc=denylist.txt.S
     fi
 
     echo USING ARCH=$Arch
+    scripts/config -e CRYPTO_FIPS140_EXTMOD
     %{make} ARCH=$Arch %{?_kernel_cc} olddefconfig > /dev/null
 
     # This ensures build-ids are unique to allow parallel debuginfo
     perl -p -i -e "s/^CONFIG_BUILD_SALT.*/CONFIG_BUILD_SALT=\"%{KVERREL}\"/" .config
 
-    if [ "$Flavour" != "64k" ] && [ "$Flavour" != "64kdebug" ]; then
+%if %{with_fips_build}
+    # Prepare for building out-of-tree modules
+    %{make} ARCH=$Arch %{?_kernel_cc} %{?_smp_mflags} modules_prepare
+
+    # Build fips140.ko
+    %{make} ARCH=$Arch M=fips/ KBUILD_MODPOST_WARN=1 KBUILD_SYMTYPES=y
+
+    # Copy fips140.ko in preparation for stripping
+    mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer/fips
+    install -D fips/fips140.ko $RPM_BUILD_ROOT/lib/modules/$KernelVer/fips
+
+    # Extract debuginfo for (and strip) fips140.ko
+    /usr/bin/find-debuginfo %{?_smp_mflags} --strict-build-id -n -i --keep-section .BTF -p '.*/fips140\.ko|.*/fips140\.ko\.debug' -o fips-debuginfo-$KernelVer.list --remove-section .gnu.build.attributes $RPM_BUILD_ROOT/lib/modules/$KernelVer/fips
+
+    # Generate fips140.hmac and .vmlinuz-*-fips.hmac of the _stripped_ fips140.ko
+    openssl dgst -sha256 -hmac "%{FIPS140_HMAC_KEY}" -binary -out $RPM_BUILD_ROOT/lib/modules/$KernelVer/fips/fips140.hmac $RPM_BUILD_ROOT/lib/modules/$KernelVer/fips/fips140.ko
+    openssl dgst -sha256 -hmac "%{FIPS140_HMAC_KEY}" -out $RPM_BUILD_ROOT/lib/modules/$KernelVer/.vmlinuz-$KernelVer-fips.hmac < $RPM_BUILD_ROOT/lib/modules/$KernelVer/fips/fips140.ko
+
+    cp $RPM_BUILD_ROOT/lib/modules/$KernelVer/fips/fips-debuginfo-$KernelVer.list ../
+
+    # Copy (stripped) fips140.ko and fips140.hmac back into the kernel
+    # source tree for integration into vmlinux
+    cp $RPM_BUILD_ROOT/lib/modules/$KernelVer/fips/fips140.ko crypto/
+    cp $RPM_BUILD_ROOT/lib/modules/$KernelVer/fips/fips140.hmac crypto/
+
+    # Save stripped fips140.ko, fips140.ko.debug, and fips140.hmac for
+    # -fips-build-support subpackage RPM
+    FIPSDir=%{buildroot}/usr/lib/fips-build-support
+
+    mkdir -p ${FIPSDir}/$KernelVer
+    install -m 755 fips/fips140.ko ${FIPSDir}/$KernelVer/fips140.ko
+    install -m 755 $RPM_BUILD_ROOT/lib/modules/$KernelVer/fips/fips140.hmac ${FIPSDir}/$KernelVer/
+    cp -p $RPM_BUILD_ROOT%{debuginfodir}/lib/modules/$KernelVer/fips/fips140.ko.debug ${FIPSDir}/$KernelVer/
+%else
+    fips_golden_module_path=/usr/lib/fips-build-support/%{GOLDEN_VERSION}.%{_target_cpu}${Flavour:+.${Flavour}}
+    cp -p $fips_golden_module_path/fips140.hmac crypto/fips140.hmac
+    cp -p $fips_golden_module_path/fips140.ko crypto/fips140.ko
+
+    # Add fips140.hmac to /lib/modules for verification
+    mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer/
+    openssl dgst -sha256 -hmac "%{FIPS140_HMAC_KEY}" < $fips_golden_module_path/fips140.ko -out $RPM_BUILD_ROOT/lib/modules/$KernelVer/.vmlinuz-$KernelVer-fips.hmac
+%endif
+
+    if [ "$Flavour" != "64k" ] && [ "$Flavour" != "64kdebug" ] && [ "$Flavour" != "emb" ] && [ "$Flavour" != "emb3" ] && [ "$Flavour" != "emb4" ] && [ "$Flavour" != "onos" ]; then
        %{make} ARCH=$Arch KBUILD_SYMTYPES=y %{?_kernel_cc} %{?_smp_mflags} $MakeTarget modules %{?sparse_mflags} || exit 1
     else
        %{make} ARCH=$Arch %{?_kernel_cc} %{?_smp_mflags} $MakeTarget modules %{?sparse_mflags} || exit 1
@@ -1119,9 +1312,13 @@ BuildKernel() {
     mkdir -p $RPM_BUILD_ROOT/%{image_install_path}
     mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer
 %ifarch %{arm} aarch64
-    %{make} ARCH=$Arch %{?_kernel_cc} dtbs dtbs_install INSTALL_DTBS_PATH=$RPM_BUILD_ROOT/%{image_install_path}/dtb-$KernelVer
-    cp -r $RPM_BUILD_ROOT/%{image_install_path}/dtb-$KernelVer $RPM_BUILD_ROOT/lib/modules/$KernelVer/dtb
-    find arch/$Arch/boot/dts -name '*.dtb' -type f | xargs rm -f
+    if [ "$Flavour" != "emb3" ]; then
+        %{make} ARCH=$Arch %{?_kernel_cc} dtbs dtbs_install INSTALL_DTBS_PATH=$RPM_BUILD_ROOT/%{image_install_path}/dtb-$KernelVer
+        cp -r $RPM_BUILD_ROOT/%{image_install_path}/dtb-$KernelVer $RPM_BUILD_ROOT/lib/modules/$KernelVer/dtb
+        find arch/$Arch/boot/dts -name '*.dtb' -type f | xargs rm -f
+    else
+        mkdir $RPM_BUILD_ROOT/lib/modules/$KernelVer/dtb
+    fi
 %endif
 
     cp Module.symvers Module.symvers.save
@@ -1176,6 +1373,34 @@ BuildKernel() {
     find . \( -name '*.gcno' -o -name '*.[chS]' \) -exec install -D '{}' "$RPM_BUILD_ROOT/$(pwd)/{}" \;
 %endif
 
+    # TODO : FIXME : trim then even before ?
+    rm -rf $RPM_BUILD_ROOT/lib/modules/$KernelVer/fips/*
+
+%if %{with_fips_build}
+    # Collect FIPS source code for the -fips-build-support subpackage RPM
+    mkdir -p ${FIPSDir}/usr/src/debug/kernel-%{version}/linux-%{kversion}-%{release}/fips
+    cd $RPM_BUILD_ROOT/usr/src/debug/kernel-%{version}/linux-%{kversion}-%{release}/fips
+    find -type f -name '*.[chS]' -exec cp --parents -t ${FIPSDir}/usr/src/debug/kernel-%{version}/linux-%{kversion}-%{release}/fips/ '{}' +
+    cd -
+
+    # Find the sources now check if this needs to go inside with_fips thing
+    find ${FIPSDir}/usr/src/debug/kernel-%{version}/linux-%{kversion}-%{release}/fips/ -type f -name '*.[chS]' | sed "s#%{buildroot}##" > fips-src-build-support.list
+    cp fips-src-build-support.list ../
+%else
+    FIPSDir=/usr/lib/fips-build-support
+
+    # Copy the .debuginfo files from build support package
+    mkdir -p $RPM_BUILD_ROOT%{debuginfodir}/lib/modules/$KernelVer/fips
+    fips_golden_module_path=/usr/lib/fips-build-support/%{GOLDEN_VERSION}.%{_target_cpu}${Flavour:+.${Flavour}}
+    cp -p ${fips_golden_module_path}/fips140.ko.debug $RPM_BUILD_ROOT%{debuginfodir}/lib/modules/$KernelVer/fips/
+
+    # Copy the source files from golden version to the debuginfo-common package
+    mkdir -p $RPM_BUILD_ROOT/usr/src/debug/kernel-%{version}/linux-%{kversion}-%{release}/fips/
+    cd ${FIPSDir}/usr/src/debug/kernel-%{version}/linux-%{GOLDEN_VERSION}/fips/
+    find -type f -name '*.[chS]' -exec cp --parents -t $RPM_BUILD_ROOT/usr/src/debug/kernel-%{version}/linux-%{kversion}-%{release}/fips/ '{}' +
+    cd -
+%endif
+
 %ifarch %{vdso_arches}
     %{make} ARCH=$Arch %{?_kernel_cc} %{?_smp_mflags} INSTALL_MOD_PATH=$RPM_BUILD_ROOT vdso_install KERNELRELEASE=$KernelVer
 %endif
@@ -1203,6 +1428,10 @@ BuildKernel() {
     if [ ! -e Module.symvers ]; then
       touch Module.symvers
     fi
+%if %{with_fips_build}
+    cp fips/Module.symvers $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/fips
+%endif
+
     cp Module.symvers $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
     cp System.map $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
     if [ -s Module.markers ]; then
@@ -1220,18 +1449,39 @@ BuildKernel() {
     rm -f $RPM_BUILD_ROOT/kernel-$KernelVer-kabideps
     %_sourcedir/kabitool -s Module.symvers -o $RPM_BUILD_ROOT/kernel-$KernelVer-kabideps
 
-%if %{with kabichk}
-    if [ "$Flavour" != "64k" ] && [ "$Flavour" != "64kdebug" ] && [ "$Flavour" != "debug" ]; then
+%if %{with_kabichk}
+    if [ "$Flavour" != "64k" ] && [ "$Flavour" != "64kdebug" ] && [ "$Flavour" != "debug" ] && [ "$Flavour" != "emb" ] && [ "$Flavour" != "emb3" ] && [ "$Flavour" != "emb4" ] && [ "$Flavour" != "onos" ]; then
        # Create symbol type data which can be used to introspect kABI breakages
        python3 $RPM_SOURCE_DIR/kabi collect . -o Symtypes.build
+
+       echo "**** FIPS kABI checking is enabled in kernel SPEC file for %{_target_cpu}. ****"
+       if [ -e $RPM_SOURCE_DIR/Module.kabi_%{_target_cpu}$Flavour.fips ]; then
+          cp $RPM_SOURCE_DIR/Module.kabi_%{_target_cpu}$Flavour.fips $RPM_BUILD_ROOT/Module.kabi.fips
+          cp $RPM_SOURCE_DIR/Symtypes.kabi_%{_target_cpu}$Flavour.fips $RPM_BUILD_ROOT/Symtypes.kabi.fips
+          cp $RPM_SOURCE_DIR/kabi_lockedlist_%{_target_cpu}$Flavour.fips $RPM_BUILD_ROOT/kabi_lockedlist.fips
+          python3 $RPM_SOURCE_DIR/kabi check -k $RPM_BUILD_ROOT/Module.kabi.fips -s Module.symvers \
+                                             -K $RPM_BUILD_ROOT/Symtypes.kabi.fips -S Symtypes.build
+          # Smoke tests verify that the kABI definitions are internally consistent:
+          # they contain the exact same set of symbols and symbol versions.
+          python3 $RPM_SOURCE_DIR/kabi smoke -v $RPM_BUILD_ROOT/Module.kabi.fips \
+                                             -t $RPM_BUILD_ROOT/Symtypes.kabi.fips \
+                                             -l $RPM_BUILD_ROOT/kabi_lockedlist.fips || exit 1
+          # For now, don't keep these around
+          rm $RPM_BUILD_ROOT/Module.kabi.fips
+          rm $RPM_BUILD_ROOT/Symtypes.kabi.fips
+          rm $RPM_BUILD_ROOT/kabi_lockedlist.fips
+       else
+          echo "**** NOTE: Cannot find reference Module.kabi.fips file. ****"
+          exit 1
+       fi
 
        echo "**** kABI checking is enabled in kernel SPEC file for %{_target_cpu}. ****"
        if [ -e $RPM_SOURCE_DIR/Module.kabi_%{_target_cpu}$Flavour ]; then
           cp $RPM_SOURCE_DIR/Module.kabi_%{_target_cpu}$Flavour $RPM_BUILD_ROOT/Module.kabi
           cp $RPM_SOURCE_DIR/Symtypes.kabi_%{_target_cpu}$Flavour $RPM_BUILD_ROOT/Symtypes.kabi
           cp $RPM_SOURCE_DIR/kabi_lockedlist_%{_target_cpu}$Flavour $RPM_BUILD_ROOT/kabi_lockedlist
-          $RPM_SOURCE_DIR/kabi check -k $RPM_BUILD_ROOT/Module.kabi -s Module.symvers \
-                                          -K $RPM_BUILD_ROOT/Symtypes.kabi -S Symtypes.build
+          python3 $RPM_SOURCE_DIR/kabi check -k $RPM_BUILD_ROOT/Module.kabi -s Module.symvers \
+                                             -K $RPM_BUILD_ROOT/Symtypes.kabi -S Symtypes.build
           # Smoke tests verify that the kABI definitions are internally consistent:
           # they contain the exact same set of symbols and symbol versions.
           python3 $RPM_SOURCE_DIR/kabi smoke -v $RPM_BUILD_ROOT/Module.kabi \
@@ -1311,6 +1561,7 @@ BuildKernel() {
 %if %{with_debuginfo}
     mkdir -p $RPM_BUILD_ROOT%{debuginfodir}/lib/modules/$KernelVer
     cp vmlinux $RPM_BUILD_ROOT%{debuginfodir}/lib/modules/$KernelVer
+
     # also include Symtypes.build for kABI maintenance
     [ -f Symtypes.build ] && gzip -c9 < Symtypes.build > $RPM_BUILD_ROOT%{debuginfodir}/lib/modules/$KernelVer/Symtypes.build.gz
 %endif
@@ -1377,8 +1628,8 @@ BuildKernel() {
         --output ${modlistVariant} \
         -D"Arch_%{_target_cpu}" \
         -D"Flavour_${Flavour}" \
-        $RPM_SOURCE_DIR/modules.yaml.S \
-        $RPM_SOURCE_DIR/denylist.txt.S)
+        $RPM_SOURCE_DIR/${modlistSrc} \
+        $RPM_SOURCE_DIR/${denylistSrc})
 
     # Copy the System.map file for depmod to use, and create a backup of the
     # full module tree so we can restore it after we're done filtering
@@ -1573,6 +1824,22 @@ BuildKernel %make_target %kernel_image 64k
 BuildKernel %make_target %kernel_image 64kdebug
 %endif
 
+%if %{with_embedded4}
+BuildKernel %make_target %kernel_image emb4
+%endif
+
+%if %{with_embedded3}
+BuildKernel %make_target %kernel_image emb3
+%endif
+
+%if %{with_embedded}
+BuildKernel %make_target %kernel_image emb
+%endif
+
+%if %{with_onos}
+BuildKernel %make_target %kernel_image onos
+%endif
+
 %global bpftool_make \
   %{make} EXTRA_CFLAGS="${RPM_OPT_FLAGS}" EXTRA_LDFLAGS="%{__global_ldflags}" DESTDIR=$RPM_BUILD_ROOT VMLINUX_H=$RPM_BUILD_ROOT/$BpfDevelDir/vmlinux.h
 %if %{with_bpftool}
@@ -1656,6 +1923,26 @@ BuildKernel %make_target %kernel_image 64kdebug
        mv certs/signing_key.x509.sign.64kdebug certs/signing_key.x509 \
        %{modsign_cmd} %{?_smp_mflags} $RPM_BUILD_ROOT/lib/modules/%{KVERREL}.64kdebug/ %{dgst} \
      fi \
+    if [ "%{with_embedded4}" -ne "0" ]; then \
+       mv certs/signing_key.pem.sign.emb4 certs/signing_key.pem \
+       mv certs/signing_key.x509.sign.emb4 certs/signing_key.x509 \
+       %{modsign_cmd} %{?_smp_mflags} $RPM_BUILD_ROOT/lib/modules/%{KVERREL}.emb4/ %{dgst} \
+    fi \
+    if [ "%{with_embedded3}" -ne "0" ]; then \
+       mv certs/signing_key.pem.sign.emb3 certs/signing_key.pem \
+       mv certs/signing_key.x509.sign.emb3 certs/signing_key.x509 \
+       %{modsign_cmd} %{?_smp_mflags} $RPM_BUILD_ROOT/lib/modules/%{KVERREL}.emb3/ %{dgst} \
+    fi \
+    if [ "%{with_embedded}" -ne "0" ]; then \
+       mv certs/signing_key.pem.sign.emb certs/signing_key.pem \
+       mv certs/signing_key.x509.sign.emb certs/signing_key.x509 \
+       %{modsign_cmd} %{?_smp_mflags} $RPM_BUILD_ROOT/lib/modules/%{KVERREL}.emb/ %{dgst} \
+    fi \
+    if [ "%{with_onos}" -ne "0" ]; then \
+       mv certs/signing_key.pem.sign.onos certs/signing_key.pem \
+       mv certs/signing_key.x509.sign.onos certs/signing_key.x509 \
+       %{modsign_cmd} %{?_smp_mflags} $RPM_BUILD_ROOT/lib/modules/%{KVERREL}.onos/ %{dgst} \
+    fi \
   fi \
 %{nil}
 
@@ -2031,6 +2318,26 @@ fi\
 %kernel_variant_postun -o -v 64kdebug
 %kernel_variant_post -o -v 64kdebug
 
+%kernel_variant_pre -o emb4
+%kernel_variant_preun -o emb4
+%kernel_variant_postun -o -v emb4
+%kernel_variant_post -o -v emb4
+
+%kernel_variant_pre -o emb3
+%kernel_variant_preun -o emb3
+%kernel_variant_postun -o -v emb3
+%kernel_variant_post -o -v emb3
+
+%kernel_variant_pre -o emb
+%kernel_variant_preun -o emb
+%kernel_variant_postun -o -v emb
+%kernel_variant_post -o -v emb
+
+%kernel_variant_pre -o onos
+%kernel_variant_preun -o onos
+%kernel_variant_postun -o -v onos
+%kernel_variant_post -o -v onos
+
 if [ -x /sbin/ldconfig ]
 then
     /sbin/ldconfig -X || exit $?
@@ -2143,6 +2450,7 @@ fi
 %ghost /boot/initramfs-%{KVERREL}%{?2:.%{2}}.img\
 %ghost /boot/config-%{KVERREL}%{?2:.%{2}}\
 /lib/modules/%{KVERREL}%{?2:.%{2}}/modules.packages\
+/lib/modules/%{KVERREL}%{?2:.%{2}}/.vmlinuz-%{KVERREL}%{?2:.%{2}}-fips.hmac\
 %{expand:%%files -f %{variant_name}-modules-core.list -n %{variant_name}-modules-core}\
 %dir /lib/modules/%{KVERREL}%{?2:.%{2}}/kernel\
 /lib/modules/%{KVERREL}%{?2:.%{2}}/kernel/vmlinux.ctfa\
@@ -2181,6 +2489,13 @@ fi
 %endif\
 %{debuginfodir}/lib/modules/%{KVERREL}%{?2:.%{2}}\
 %{debuginfodir}/usr/src/kernels/%{KVERREL}%{?2:.%{2}}\
+%if %{with_fips_build}\
+%{expand:%%files -f fips-src-build-support.list -n %{variant_name}-fips-build-support}\
+%dir /usr/lib/fips-build-support\
+/usr/lib/fips-build-support/%{KVERREL}%{?2:.%{2}}/fips140.ko\
+/usr/lib/fips-build-support/%{KVERREL}%{?2:.%{2}}/fips140.ko.debug\
+/usr/lib/fips-build-support/%{KVERREL}%{?2:.%{2}}/fips140.hmac\
+%endif\
 %endif\
 %endif\
 %endif\
@@ -2193,5 +2508,13 @@ fi
 
 %kernel_variant_files -o %{with_64k_ps} 64k
 %kernel_variant_files -o %{with_64k_ps_debug} 64kdebug
+
+%kernel_variant_files -o %{with_embedded4} emb4
+
+%kernel_variant_files -o %{with_embedded3} emb3
+
+%kernel_variant_files -o %{with_embedded} emb
+
+%kernel_variant_files -o %{with_onos} onos
 
 %changelog

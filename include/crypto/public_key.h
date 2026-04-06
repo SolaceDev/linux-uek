@@ -13,6 +13,7 @@
 #include <linux/errno.h>
 #include <linux/keyctl.h>
 #include <linux/oid_registry.h>
+#include <crypto/api.h>
 
 /*
  * Cryptographic data for the public-key subtype of the asymmetric key type.
@@ -30,12 +31,13 @@ struct public_key {
 	const char *id_type;
 	const char *pkey_algo;
 	unsigned long key_eflags;	/* key extension flags */
+	UEK_KABI_RESERVE(1)
 #define KEY_EFLAG_CA		0	/* set if the CA basic constraints is set */
 #define KEY_EFLAG_DIGITALSIG	1	/* set if the digitalSignature usage is set */
 #define KEY_EFLAG_KEYCERTSIGN	2	/* set if the keyCertSign usage is set */
 };
 
-extern void public_key_free(struct public_key *key);
+DECLARE_CRYPTO_API(public_key_free, void, (struct public_key *key), (key));
 
 /*
  * Public key cryptography signature data
@@ -49,10 +51,16 @@ struct public_key_signature {
 	const char *pkey_algo;
 	const char *hash_algo;
 	const char *encoding;
+	UEK_KABI_RESERVE(1)
 };
 
-extern void public_key_signature_free(struct public_key_signature *sig);
+DECLARE_CRYPTO_API(public_key_signature_free, void, (struct public_key_signature *sig), (sig));
 
+#ifndef FIPS_MODULE
+#define public_key_subtype nonfips_public_key_subtype
+#else
+#define public_key_subtype fips_public_key_subtype
+#endif
 extern struct asymmetric_key_subtype public_key_subtype;
 
 struct key;
@@ -101,18 +109,14 @@ static inline int restrict_link_by_digsig(struct key *dest_keyring,
 }
 #endif
 
-extern int query_asymmetric_key(const struct kernel_pkey_params *,
-				struct kernel_pkey_query *);
-
-extern int encrypt_blob(struct kernel_pkey_params *, const void *, void *);
-extern int decrypt_blob(struct kernel_pkey_params *, const void *, void *);
-extern int create_signature(struct kernel_pkey_params *, const void *, void *);
-extern int verify_signature(const struct key *,
-			    const struct public_key_signature *);
+DECLARE_CRYPTO_API(query_asymmetric_key, int, (const struct kernel_pkey_params *i, struct kernel_pkey_query *j), (i, j));
+DECLARE_CRYPTO_API(encrypt_blob, int, (struct kernel_pkey_params *i, const void *j, void *k), (i, j, k));
+DECLARE_CRYPTO_API(decrypt_blob, int, (struct kernel_pkey_params *i, const void *j, void *k), (i, j, k));
+DECLARE_CRYPTO_API(create_signature, int, (struct kernel_pkey_params *i, const void *j, void *k), (i, j, k));
+DECLARE_CRYPTO_API(verify_signature, int, (const struct key *i, const struct public_key_signature *j), (i, j));
 
 #if IS_REACHABLE(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE)
-int public_key_verify_signature(const struct public_key *pkey,
-				const struct public_key_signature *sig);
+DECLARE_CRYPTO_API(public_key_verify_signature, int, (const struct public_key *pkey, const struct public_key_signature *sig), (pkey, sig));
 #else
 static inline
 int public_key_verify_signature(const struct public_key *pkey,

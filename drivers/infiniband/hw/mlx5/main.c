@@ -246,6 +246,10 @@ static int mlx5_netdev_event(struct notifier_block *this,
 	case NETDEV_DOWN: {
 		struct net_device *upper = NULL;
 
+		if (!netif_is_lag_master(ndev) && !netif_is_lag_port(ndev) &&
+		    !mlx5_core_mp_enabled(mdev))
+			return NOTIFY_DONE;
+
 		if (mlx5_lag_is_roce(mdev) || mlx5_lag_is_sriov(mdev)) {
 			struct net_device *lag_ndev;
 
@@ -1231,6 +1235,14 @@ static int mlx5_ib_query_device(struct ib_device *ibdev,
 				MLX5_IB_QUERY_DEV_RESP_PACKET_BASED_CREDIT_MODE;
 
 		resp.flags |= MLX5_IB_QUERY_DEV_RESP_FLAGS_SCAT2CQE_DCT;
+
+		if (MLX5_CAP_GEN_2(mdev, dp_ordering_force) &&
+		    (MLX5_CAP_GEN(mdev, dp_ordering_ooo_all_xrc) ||
+		    MLX5_CAP_GEN(mdev, dp_ordering_ooo_all_dc) ||
+		    MLX5_CAP_GEN(mdev, dp_ordering_ooo_all_rc) ||
+		    MLX5_CAP_GEN(mdev, dp_ordering_ooo_all_ud) ||
+		    MLX5_CAP_GEN(mdev, dp_ordering_ooo_all_uc)))
+			resp.flags |= MLX5_IB_QUERY_DEV_RESP_FLAGS_OOO_DP;
 	}
 
 	if (offsetofend(typeof(resp), sw_parsing_caps) <= uhw_outlen) {
@@ -4355,6 +4367,7 @@ static const struct ib_device_ops mlx5_ib_dev_ops = {
 	.req_notify_cq = mlx5_ib_arm_cq,
 	.rereg_user_mr = mlx5_ib_rereg_user_mr,
 	.resize_cq = mlx5_ib_resize_cq,
+	.ufile_hw_cleanup = mlx5_ib_ufile_hw_cleanup,
 #ifndef WITHOUT_ORACLE_EXTENSIONS
 	.share_pd     = mlx5_ib_share_pd,
 #endif /* !WITHOUT_ORACLE_EXTENSIONS */

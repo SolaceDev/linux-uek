@@ -39,12 +39,12 @@ static void sha1_generic_block_fn(struct sha1_state *sst, u8 const *src,
 	memzero_explicit(temp, sizeof(temp));
 }
 
-int crypto_sha1_update(struct shash_desc *desc, const u8 *data,
+int CRYPTO_API(crypto_sha1_update)(struct shash_desc *desc, const u8 *data,
 		       unsigned int len)
 {
 	return sha1_base_do_update(desc, data, len, sha1_generic_block_fn);
 }
-EXPORT_SYMBOL(crypto_sha1_update);
+DEFINE_CRYPTO_API(crypto_sha1_update);
 
 static int sha1_final(struct shash_desc *desc, u8 *out)
 {
@@ -52,13 +52,13 @@ static int sha1_final(struct shash_desc *desc, u8 *out)
 	return sha1_base_finish(desc, out);
 }
 
-int crypto_sha1_finup(struct shash_desc *desc, const u8 *data,
+int CRYPTO_API(crypto_sha1_finup)(struct shash_desc *desc, const u8 *data,
 		      unsigned int len, u8 *out)
 {
 	sha1_base_do_update(desc, data, len, sha1_generic_block_fn);
 	return sha1_final(desc, out);
 }
-EXPORT_SYMBOL(crypto_sha1_finup);
+DEFINE_CRYPTO_API(crypto_sha1_finup);
 
 static struct shash_alg alg = {
 	.digestsize	=	SHA1_DIGEST_SIZE,
@@ -86,11 +86,19 @@ static void __exit sha1_generic_mod_fini(void)
 	crypto_unregister_shash(&alg);
 }
 
-subsys_initcall(sha1_generic_mod_init);
-module_exit(sha1_generic_mod_fini);
+crypto_subsys_initcall(sha1_generic_mod_init);
+crypto_module_exit(sha1_generic_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SHA1 Secure Hash Algorithm");
 
 MODULE_ALIAS_CRYPTO("sha1");
 MODULE_ALIAS_CRYPTO("sha1-generic");
+
+#ifdef FIPS_MODULE
+#undef EXPORT_SYMBOL
+#define EXPORT_SYMBOL(x)
+
+#define sha1_final _sha1_final
+#include <../lib/crypto/sha1.c>
+#endif

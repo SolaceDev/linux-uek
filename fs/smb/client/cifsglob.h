@@ -161,6 +161,7 @@ enum upcall_target_enum {
 };
 
 enum cifs_reparse_type {
+	CIFS_REPARSE_TYPE_NONE,
 	CIFS_REPARSE_TYPE_NFS,
 	CIFS_REPARSE_TYPE_WSL,
 	CIFS_REPARSE_TYPE_DEFAULT = CIFS_REPARSE_TYPE_NFS,
@@ -169,9 +170,44 @@ enum cifs_reparse_type {
 static inline const char *cifs_reparse_type_str(enum cifs_reparse_type type)
 {
 	switch (type) {
+	case CIFS_REPARSE_TYPE_NONE:
+		return "none";
 	case CIFS_REPARSE_TYPE_NFS:
 		return "nfs";
 	case CIFS_REPARSE_TYPE_WSL:
+		return "wsl";
+	default:
+		return "unknown";
+	}
+}
+
+enum cifs_symlink_type {
+	CIFS_SYMLINK_TYPE_DEFAULT,
+	CIFS_SYMLINK_TYPE_NONE,
+	CIFS_SYMLINK_TYPE_NATIVE,
+	CIFS_SYMLINK_TYPE_UNIX,
+	CIFS_SYMLINK_TYPE_MFSYMLINKS,
+	CIFS_SYMLINK_TYPE_SFU,
+	CIFS_SYMLINK_TYPE_NFS,
+	CIFS_SYMLINK_TYPE_WSL,
+};
+
+static inline const char *cifs_symlink_type_str(enum cifs_symlink_type type)
+{
+	switch (type) {
+	case CIFS_SYMLINK_TYPE_NONE:
+		return "none";
+	case CIFS_SYMLINK_TYPE_NATIVE:
+		return "native";
+	case CIFS_SYMLINK_TYPE_UNIX:
+		return "unix";
+	case CIFS_SYMLINK_TYPE_MFSYMLINKS:
+		return "mfsymlinks";
+	case CIFS_SYMLINK_TYPE_SFU:
+		return "sfu";
+	case CIFS_SYMLINK_TYPE_NFS:
+		return "nfs";
+	case CIFS_SYMLINK_TYPE_WSL:
 		return "wsl";
 	default:
 		return "unknown";
@@ -225,10 +261,7 @@ struct cifs_open_info_data {
 			struct kvec iov;
 		} io;
 		__u32 tag;
-		union {
-			struct reparse_data_buffer *buf;
-			struct reparse_posix_data *posix;
-		};
+		struct reparse_data_buffer *buf;
 	} reparse;
 	struct {
 		__u8		eas[SMB2_WSL_MAX_QUERY_EA_RESP_SIZE];

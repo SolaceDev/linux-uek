@@ -586,6 +586,8 @@ replay_again:
 				goto finished;
 			}
 			num_rqst++;
+			trace_smb3_query_wsl_ea_compound_enter(xid, tcon->tid,
+							       ses->Suid, full_path);
 			break;
 		default:
 			cifs_dbg(VFS, "Invalid command\n");
@@ -992,10 +994,11 @@ int smb2_query_path_info(const unsigned int xid,
 		 * Skip SMB2_OP_GET_REPARSE if symlink already parsed in create
 		 * response.
 		 */
-		if (data->reparse.tag != IO_REPARSE_TAG_SYMLINK)
+		if (data->reparse.tag != IO_REPARSE_TAG_SYMLINK) {
 			cmds[num_cmds++] = SMB2_OP_GET_REPARSE;
-		if (!tcon->posix_extensions)
-			cmds[num_cmds++] = SMB2_OP_QUERY_WSL_EA;
+			if (!tcon->posix_extensions)
+				cmds[num_cmds++] = SMB2_OP_QUERY_WSL_EA;
+		}
 
 		oparms = CIFS_OPARMS(cifs_sb, tcon, full_path,
 				     FILE_READ_ATTRIBUTES |
@@ -1014,6 +1017,11 @@ int smb2_query_path_info(const unsigned int xid,
 				rc = 0;
 			else
 				rc = -EOPNOTSUPP;
+		}
+
+		if (data->reparse.tag == IO_REPARSE_TAG_SYMLINK && !rc) {
+			bool directory = le32_to_cpu(data->fi.Attributes) & ATTR_DIRECTORY;
+			rc = smb2_fix_symlink_target_type(&data->symlink_target, directory, cifs_sb);
 		}
 		break;
 	case -EREMOTE:
@@ -1272,6 +1280,15 @@ struct inode *smb2_get_reparse_inode(struct cifs_open_info_data *data,
 	int cmds[2];
 	int rc;
 	int i;
+
+	/*
+	 * If server filesystem does not support reparse points then do not
+	 * attempt to create reparse point. This will prevent creating unusable
+	 * empty object on the server.
+	 */
+	if (!(le32_to_cpu(tcon->fsAttrInfo.Attributes) & FILE_SUPPORTS_REPARSE_POINTS))
+		if (!tcon->posix_extensions)
+			return ERR_PTR(-EOPNOTSUPP);
 
 	oparms = CIFS_OPARMS(cifs_sb, tcon, full_path,
 			     SYNCHRONIZE | DELETE |

@@ -11,6 +11,13 @@
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM kvm
 
+#ifdef CREATE_TRACE_POINTS
+#define tracing_kvm_rip_read(vcpu) ({					\
+	typeof(vcpu) __vcpu = vcpu;					\
+	__vcpu->arch.guest_state_protected ? 0 : kvm_rip_read(__vcpu);	\
+	})
+#endif
+
 /*
  * Tracepoint for guest mode entry.
  */
@@ -22,15 +29,22 @@ TRACE_EVENT(kvm_entry,
 		__field(	unsigned int,	vcpu_id		)
 		__field(	unsigned long,	rip		)
 		__field(	bool,		immediate_exit	)
+		__field(	u32,		intr_info	)
+		__field(	u32,		error_code	)
 	),
 
 	TP_fast_assign(
 		__entry->vcpu_id        = vcpu->vcpu_id;
-		__entry->rip		= kvm_rip_read(vcpu);
+		__entry->rip		= tracing_kvm_rip_read(vcpu);
 		__entry->immediate_exit	= force_immediate_exit;
+
+		kvm_x86_call(get_entry_info)(vcpu, &__entry->intr_info,
+					     &__entry->error_code);
 	),
 
-	TP_printk("vcpu %u, rip 0x%lx%s", __entry->vcpu_id, __entry->rip,
+	TP_printk("vcpu %u, rip 0x%lx intr_info 0x%08x error_code 0x%08x%s",
+		  __entry->vcpu_id, __entry->rip,
+		  __entry->intr_info, __entry->error_code,
 		  __entry->immediate_exit ? "[immediate exit]" : "")
 );
 
@@ -311,7 +325,7 @@ TRACE_EVENT(name,							     \
 	),								     \
 									     \
 	TP_fast_assign(							     \
-		__entry->guest_rip	= kvm_rip_read(vcpu);		     \
+		__entry->guest_rip	= tracing_kvm_rip_read(vcpu);		     \
 		__entry->isa            = isa;				     \
 		__entry->vcpu_id        = vcpu->vcpu_id;		     \
 		kvm_x86_call(get_exit_info)(vcpu,			     \
@@ -411,7 +425,7 @@ TRACE_EVENT(kvm_page_fault,
 
 	TP_fast_assign(
 		__entry->vcpu_id	= vcpu->vcpu_id;
-		__entry->guest_rip	= kvm_rip_read(vcpu);
+		__entry->guest_rip	= tracing_kvm_rip_read(vcpu);
 		__entry->fault_address	= fault_address;
 		__entry->error_code	= error_code;
 	),

@@ -185,6 +185,9 @@ static int crypto_authenc_esn_encrypt(struct aead_request *req)
 	struct scatterlist *src, *dst;
 	int err;
 
+	if (assoclen < 8)
+		return -EINVAL;
+
 	sg_init_table(areq_ctx->src, 2);
 	src = scatterwalk_ffwd(areq_ctx->src, req->src, assoclen);
 	dst = src;
@@ -274,6 +277,9 @@ static int crypto_authenc_esn_decrypt(struct aead_request *req)
 	struct scatterlist *dst = req->dst;
 	u32 tmp[2];
 	int err;
+
+	if (assoclen < 8)
+		return -EINVAL;
 
 	cryptlen -= authsize;
 
@@ -465,8 +471,8 @@ static void __exit crypto_authenc_esn_module_exit(void)
 	crypto_unregister_template(&crypto_authenc_esn_tmpl);
 }
 
-subsys_initcall(crypto_authenc_esn_module_init);
-module_exit(crypto_authenc_esn_module_exit);
+crypto_subsys_initcall(crypto_authenc_esn_module_init);
+crypto_module_exit(crypto_authenc_esn_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Steffen Klassert <steffen.klassert@secunet.com>");

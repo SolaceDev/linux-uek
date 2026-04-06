@@ -53,6 +53,7 @@ struct crypto_acomp {
 	int (*decompress)(struct acomp_req *req);
 	void (*dst_free)(struct scatterlist *dst);
 	unsigned int reqsize;
+	UEK_KABI_RESERVE(1)
 	struct crypto_tfm base;
 };
 
@@ -82,8 +83,8 @@ struct comp_alg_common COMP_ALG_COMMON;
  * Return:	allocated handle in case of success; IS_ERR() is true in case
  *		of an error, PTR_ERR() returns the error code.
  */
-struct crypto_acomp *crypto_alloc_acomp(const char *alg_name, u32 type,
-					u32 mask);
+DECLARE_CRYPTO_API(crypto_alloc_acomp, struct crypto_acomp *, (const char *alg_name,
+			u32 type, u32 mask), (alg_name, type, mask));
 /**
  * crypto_alloc_acomp_node() -- allocate ACOMPRESS tfm handle with desired NUMA node
  * @alg_name:	is the cra_name / name or cra_driver_name / driver name of the
@@ -100,8 +101,8 @@ struct crypto_acomp *crypto_alloc_acomp(const char *alg_name, u32 type,
  * Return:	allocated handle in case of success; IS_ERR() is true in case
  *		of an error, PTR_ERR() returns the error code.
  */
-struct crypto_acomp *crypto_alloc_acomp_node(const char *alg_name, u32 type,
-					u32 mask, int node);
+DECLARE_CRYPTO_API(crypto_alloc_acomp_node, struct crypto_acomp *, (const char *alg_name,
+			u32 type, u32 mask, int node), (alg_name, type, mask, node));
 
 static inline struct crypto_tfm *crypto_acomp_tfm(struct crypto_acomp *tfm)
 {
@@ -175,7 +176,7 @@ static inline int crypto_has_acomp(const char *alg_name, u32 type, u32 mask)
  *
  * Return:	allocated handle in case of success or NULL in case of an error
  */
-struct acomp_req *acomp_request_alloc(struct crypto_acomp *tfm);
+DECLARE_CRYPTO_API(acomp_request_alloc, struct acomp_req *, (struct crypto_acomp *tfm), (tfm));
 
 /**
  * acomp_request_free() -- zeroize and free asynchronous (de)compression
@@ -184,7 +185,7 @@ struct acomp_req *acomp_request_alloc(struct crypto_acomp *tfm);
  *
  * @req:	request to free
  */
-void acomp_request_free(struct acomp_req *req);
+DECLARE_CRYPTO_API(acomp_request_free, void, (struct acomp_req *req), (req));
 
 /**
  * acomp_request_set_callback() -- Sets an asynchronous callback

@@ -485,12 +485,17 @@ static void crypto_netlink_rcv(struct sk_buff *skb)
 
 static int __net_init crypto_netlink_init(struct net *net)
 {
+	struct sock *nlsk;
 	struct netlink_kernel_cfg cfg = {
 		.input	= crypto_netlink_rcv,
 	};
 
-	net->crypto_nlsk = netlink_kernel_create(net, NETLINK_CRYPTO, &cfg);
-	return net->crypto_nlsk == NULL ? -ENOMEM : 0;
+	nlsk = netlink_kernel_create(net, NETLINK_CRYPTO, &cfg);
+	if (!nlsk)
+		return -ENOMEM;
+
+	net->crypto_nlsk = nlsk;
+	return 0;
 }
 
 static void __net_exit crypto_netlink_exit(struct net *net)
@@ -514,8 +519,8 @@ static void __exit crypto_user_exit(void)
 	unregister_pernet_subsys(&crypto_netlink_net_ops);
 }
 
-module_init(crypto_user_init);
-module_exit(crypto_user_exit);
+crypto_module_init(crypto_user_init);
+crypto_module_exit(crypto_user_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Steffen Klassert <steffen.klassert@secunet.com>");
 MODULE_DESCRIPTION("Crypto userspace configuration API");

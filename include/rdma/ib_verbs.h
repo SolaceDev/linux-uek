@@ -59,9 +59,6 @@ extern struct workqueue_struct *ib_comp_unbound_wq;
 
 struct ib_ucq_object;
 
-__printf(3, 4) __cold
-void ibdev_printk(const char *level, const struct ib_device *ibdev,
-		  const char *format, ...);
 __printf(2, 3) __cold
 void ibdev_emerg(const struct ib_device *ibdev, const char *format, ...);
 __printf(2, 3) __cold
@@ -2204,6 +2201,7 @@ struct ib_port_cache {
 	struct ib_gid_table   *gid;
 	u8                     lmc;
 	enum ib_port_state     port_state;
+	enum ib_port_state     last_port_state;
 };
 
 struct ib_port_immutable {
@@ -2283,7 +2281,9 @@ struct rdma_netdev_alloc_params {
 
 struct ib_odp_counters {
 	atomic64_t faults;
+	atomic64_t faults_handled;
 	atomic64_t invalidations;
+	atomic64_t invalidations_handled;
 	atomic64_t prefetch;
 };
 
@@ -2621,14 +2621,6 @@ struct ib_device_ops {
 	int (*get_hw_stats)(struct ib_device *device,
 			    struct rdma_hw_stats *stats, u32 port, int index);
 
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-	/**
-	 * clear_hw_stats - Clear the hw stats
-	 * @ib_device - device whose counters to clear.
-	 * @port - port whose counters to clear.
-	 */
-	int (*clear_hw_stats)(struct ib_device *device, u32 port);
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
 	/**
 	 * modify_hw_stat - Modify the counter configuration
 	 * @enable: true/false when enable/disable a counter
@@ -2725,6 +2717,19 @@ struct ib_device_ops {
 	 * del_sub_dev - Delete a sub IB device
 	 */
 	void (*del_sub_dev)(struct ib_device *sub_dev);
+
+	/**
+	 * ufile_cleanup - Attempt to cleanup ubojects HW resources inside
+	 * the ufile.
+	 */
+	void (*ufile_hw_cleanup)(struct ib_uverbs_file *ufile);
+
+	/**
+	 * report_port_event - Drivers need to implement this if they have
+	 * some private stuff to handle when link status changes.
+	 */
+	void (*report_port_event)(struct ib_device *ibdev,
+				  struct net_device *ndev, unsigned long event);
 
 	DECLARE_RDMA_OBJ_SIZE(ib_ah);
 	DECLARE_RDMA_OBJ_SIZE(ib_counters);
@@ -4518,6 +4523,17 @@ int ib_device_set_netdev(struct ib_device *ib_dev, struct net_device *ndev,
 			 unsigned int port);
 struct net_device *ib_device_get_netdev(struct ib_device *ib_dev,
 					u32 port);
+int ib_query_netdev_port(struct ib_device *ibdev, struct net_device *ndev,
+			 u32 *port);
+
+static inline enum ib_port_state ib_get_curr_port_state(struct net_device *net_dev)
+{
+	return (netif_running(net_dev) && netif_carrier_ok(net_dev)) ?
+		IB_PORT_ACTIVE : IB_PORT_DOWN;
+}
+
+void ib_dispatch_port_state_event(struct ib_device *ibdev,
+				  struct net_device *ndev);
 struct ib_wq *ib_create_wq(struct ib_pd *pd,
 			   struct ib_wq_init_attr *init_attr);
 int ib_destroy_wq_user(struct ib_wq *wq, struct ib_udata *udata);

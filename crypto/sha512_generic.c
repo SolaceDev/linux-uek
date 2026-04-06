@@ -154,12 +154,12 @@ static void sha512_generic_block_fn(struct sha512_state *sst, u8 const *src,
 	}
 }
 
-int crypto_sha512_update(struct shash_desc *desc, const u8 *data,
+int CRYPTO_API(crypto_sha512_update)(struct shash_desc *desc, const u8 *data,
 			unsigned int len)
 {
 	return sha512_base_do_update(desc, data, len, sha512_generic_block_fn);
 }
-EXPORT_SYMBOL(crypto_sha512_update);
+DEFINE_CRYPTO_API(crypto_sha512_update);
 
 static int sha512_final(struct shash_desc *desc, u8 *hash)
 {
@@ -167,13 +167,13 @@ static int sha512_final(struct shash_desc *desc, u8 *hash)
 	return sha512_base_finish(desc, hash);
 }
 
-int crypto_sha512_finup(struct shash_desc *desc, const u8 *data,
+int CRYPTO_API(crypto_sha512_finup)(struct shash_desc *desc, const u8 *data,
 			unsigned int len, u8 *hash)
 {
 	sha512_base_do_update(desc, data, len, sha512_generic_block_fn);
 	return sha512_final(desc, hash);
 }
-EXPORT_SYMBOL(crypto_sha512_finup);
+DEFINE_CRYPTO_API(crypto_sha512_finup);
 
 static struct shash_alg sha512_algs[2] = { {
 	.digestsize	=	SHA512_DIGEST_SIZE,
@@ -215,8 +215,8 @@ static void __exit sha512_generic_mod_fini(void)
 	crypto_unregister_shashes(sha512_algs, ARRAY_SIZE(sha512_algs));
 }
 
-subsys_initcall(sha512_generic_mod_init);
-module_exit(sha512_generic_mod_fini);
+crypto_subsys_initcall(sha512_generic_mod_init);
+crypto_module_exit(sha512_generic_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SHA-512 and SHA-384 Secure Hash Algorithms");

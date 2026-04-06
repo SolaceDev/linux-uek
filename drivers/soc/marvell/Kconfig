@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# MARVELL SoC drivers
+#
+
+menu "Marvell SoC drivers"
+
+config OCTEONTX2_PCI_CONSOLE
+	tristate "OcteonTX2/CN10K PCI Endpoint console driver"
+	depends on ARM64 && PCI
+	default n
+	help
+	  Select this option to enable the PCI console driver when
+	  OcteonTX2/CN10K is configured as an Endpoint.  This allows the
+	  host [PC] to connect to the Linux console via PCI
+	  (using the host remote console utility).
+	  To enable this console, specify 'console=pci0' on the kernel
+	  command line.
+	  To compile this as a module, choose M here.  However, when used
+	  as a module, some kernel boot messages may be missing from the
+	  console.
+
+config OCTEONTX2_PCI_CONSOLE_DEBUG
+	bool "OcteonTX2/CN10K PCI Endpoint console driver verbose debug messages"
+	depends on OCTEONTX2_PCI_CONSOLE
+	help
+	  Say Y here if you want the OcteonTX2/CN10K PCI console driver
+	  to write verbose debug messages to the system log.
+	  Select this if you are having a problem with the OcteonTX2/CN10K
+	  PCI console and want to see more details of the console's
+	  operation.
+
+	  If you are unsure about this, say N here.
+
+config OCTEONTX2_PCI_CONSOLE_TRACE
+	bool "OcteonTX2/CN10K PCI Endpoint console driver trace messages"
+	depends on OCTEONTX2_PCI_CONSOLE
+	depends on DYNAMIC_FTRACE
+	help
+	  Say Y here if you want the OcteonTX2/CN10K PCI console driver
+	  to write verbose debug messages to the dynamic ftrace infrastructure.
+	  Select this if you are having a problem with the OcteonTX2/CN10K PCI console
+	  and want to see more details of the parts that are not debuggable
+	  with traditional prints coming from OCTEONTX2_PCI_CONSOLE_DEBUG.
+
+	  If you are unsure about this, say N here.
+
+config HW_CSR_ACCESS
+	tristate "Access HW Device Config Space"
+	depends on OCTEONTX2_AF
+	default m
+	help
+	  provides an interface which enables user space utility to read from or to write
+	  to HW Device Config Space Registers, Contexts, Memory.
+
+config OCTEONTX_INFO
+	tristate "OcteonTX Info driver"
+	depends on PROC_FS
+	help
+	  provides procfs interface to board information like board name, board revision
+	  mac addresses, board serial number and more. These are boards housing Marvell
+	  OcteonTX family chipsets.
+
+endmenu

@@ -1436,16 +1436,29 @@ static void test_cipher_speed(const char *algo, int enc, unsigned int secs,
 				   false);
 }
 
-static inline int tcrypt_test(const char *alg)
+static inline int tcrypt_test(const char *name)
 {
 	int ret;
+	struct crypto_alg *alg;
 
-	pr_debug("testing %s\n", alg);
+	pr_debug("testing %s\n", name);
 
-	ret = alg_test(alg, alg, 0, 0);
+	alg = crypto_alg_mod_lookup(name, 0, 0);
+	if (IS_ERR(alg)) {
+		/* non-fips algs return -EAGAIN or -ENOENT in fips mode */
+		if (fips_enabled && (PTR_ERR(alg) == -EAGAIN || PTR_ERR(alg) == -ENOENT))
+			return 0;
+
+		return PTR_ERR(alg);
+	}
+
+	ret = alg_test(alg, alg->cra_driver_name, alg->cra_name,
+				alg->cra_flags, 0);
 	/* non-fips algs return -EINVAL or -ECANCELED in fips mode */
 	if (fips_enabled && (ret == -EINVAL || ret == -ECANCELED))
 		ret = 0;
+
+	crypto_mod_put(alg);
 	return ret;
 }
 
@@ -2864,8 +2877,8 @@ err_free_tv:
  */
 static void __exit tcrypt_mod_fini(void) { }
 
-late_initcall(tcrypt_mod_init);
-module_exit(tcrypt_mod_fini);
+crypto_late_initcall(tcrypt_mod_init);
+crypto_module_exit(tcrypt_mod_fini);
 
 module_param(alg, charp, 0);
 module_param(type, uint, 0);

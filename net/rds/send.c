@@ -119,9 +119,6 @@ void rds_send_path_reset(struct rds_conn_path *cp)
 					struct rds_notifier *notifier;
 
 					notifier = rm->rdma.op_notifier;
-					if (notifier->n_conn) /* overwritten */
-						rds_conn_put(notifier->n_conn);
-					rds_conn_get(cp->cp_conn);
 					notifier->n_conn = cp->cp_conn;
 					if (test_bit(RDS_MSG_RETRANSMITTED,
 						&rm->m_flags) &&
@@ -139,9 +136,6 @@ void rds_send_path_reset(struct rds_conn_path *cp)
 			}
 			if (rm->data.op_active && rm->data.op_async) {
 				if (rm->data.op_notifier) {
-					if (rm->data.op_notifier->n_conn) /* overwritten */
-						rds_conn_put(rm->data.op_notifier->n_conn);
-					rds_conn_get(cp->cp_conn);
 					rm->data.op_notifier->n_conn =
 						cp->cp_conn;
 					if (!test_bit(RDS_MSG_FLUSH,
@@ -202,12 +196,13 @@ int rds_send_xmit(struct rds_conn_path *cp)
 	unsigned int tmp;
 	struct scatterlist *sg;
 	int ret = 0;
-	LIST_HEAD(to_be_dropped);
+	struct list_head to_be_dropped;
 	int same_rm = 0;
 	int batch_count;
 	unsigned long send_gen = 0;
 
 restart:
+	INIT_LIST_HEAD(&to_be_dropped);
 	batch_count = 0;
 
 	/*
@@ -249,7 +244,7 @@ restart:
 	if (!rds_conn_path_up(cp)) {
 		trace_rds_drop_egress(NULL, NULL, conn, cp,
 				      &conn->c_laddr, &conn->c_faddr,
-				      "conn path is down");
+				      "conn path is not up");
 		release_in_xmit(cp);
 		ret = 0;
 		goto out;
@@ -312,7 +307,6 @@ restart:
 			}
 			rm->data.op_active = 1;
 			rm->m_inc.i_conn_path = cp;
-			rds_conn_get(cp->cp_conn);
 			rm->m_inc.i_conn = cp->cp_conn;
 
 			cp->cp_xmit_rm = rm;
@@ -434,10 +428,15 @@ restart:
 						      "flush due to bad MR key");
 				spin_lock_irqsave(&cp->cp_lock, flags);
 				if (test_and_clear_bit(RDS_MSG_ON_CONN,
-					&rm->m_flags))
+						       &rm->m_flags)) {
+					/* last rds_message_put happens after batch */
 					list_move_tail(&rm->m_conn_item,
 						&to_be_dropped);
-				spin_unlock_irqrestore(&cp->cp_lock, flags);
+					spin_unlock_irqrestore(&cp->cp_lock, flags);
+				} else {
+					spin_unlock_irqrestore(&cp->cp_lock, flags);
+					rds_message_put(rm); /* discard rds_message */
+				}
 				continue;
 			}
 
@@ -888,9 +887,6 @@ static inline void rds_q_or_free_notifier(struct rds_sock *rs,
 		list_add_tail(&notifier->n_list, &rs->rs_notify_queue);
 		spin_unlock(&rs->rs_lock);
 	} else {
-		if (notifier->n_conn)
-			/* get in rds_send_path_reset */
-			rds_conn_put(notifier->n_conn);
 		kfree(notifier);
 	}
 }
@@ -1217,13 +1213,7 @@ static int rds_send_queue_rm(struct rds_sock *rs, struct rds_connection *conn,
 		rds_message_addref(rm);
 		rm->m_rs = rs;
 
-		/* The code ordering is a little weird, but we're
-		   trying to minimize the time we hold c_lock */
 		rds_message_populate_header(&rm->m_inc.i_hdr, sport, dport, 0);
-		rds_conn_get(conn);
-		rm->m_inc.i_conn = conn;
-		rm->m_inc.i_conn_path = cp;
-		rds_message_addref(rm);
 
 		spin_lock(&cp->cp_lock);
 		if (cp->cp_pending_flush) {
@@ -1249,6 +1239,9 @@ static int rds_send_queue_rm(struct rds_sock *rs, struct rds_connection *conn,
 			rds_stats_inc(rs->rs_stats, s_send_payload_csum_added);
 		}
 
+		rm->m_inc.i_conn = conn;
+		rm->m_inc.i_conn_path = cp;
+		rds_message_addref(rm);
 		list_add_tail(&rm->m_conn_item, &cp->cp_send_queue);
 		rm->m_inc.i_tx_lat = jiffies;
 		rds_set_rm_flag_bit(rm, RDS_MSG_ON_CONN);
@@ -1916,7 +1909,6 @@ static int rds_send_probe(struct rds_conn_path *cp, __be16 sport,
 	rm->m_inc.i_tx_lat = jiffies;
 	rds_set_rm_flag_bit(rm, RDS_MSG_ON_CONN);
 	rds_message_addref(rm);
-	rds_conn_get(cp->cp_conn);
 	rm->m_inc.i_conn = cp->cp_conn;
 	rm->m_inc.i_conn_path = cp;
 

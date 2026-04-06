@@ -39,6 +39,7 @@ struct mlx5_fw_reset {
 enum {
 	MLX5_FW_RST_STATE_IDLE = 0,
 	MLX5_FW_RST_STATE_TOGGLE_REQ = 4,
+	MLX5_FW_RST_STATE_DROP_MODE = 5,
 };
 
 enum {
@@ -633,6 +634,7 @@ void mlx5_sync_reset_unload_flow(struct mlx5_core_dev *dev, bool locked)
 {
 	struct mlx5_fw_reset *fw_reset = dev->priv.fw_reset;
 	unsigned long timeout;
+	int poll_freq = 20;
 	bool reset_action;
 	u8 rst_state;
 	int err;
@@ -657,7 +659,12 @@ void mlx5_sync_reset_unload_flow(struct mlx5_core_dev *dev, bool locked)
 			reset_action = true;
 			break;
 		}
-		msleep(20);
+		if (rst_state == MLX5_FW_RST_STATE_DROP_MODE) {
+			mlx5_core_info(dev, "Sync Reset Drop mode ack\n");
+			mlx5_set_fw_rst_ack(dev);
+			poll_freq = 1000;
+		}
+		msleep(poll_freq);
 	} while (!time_after(jiffies, timeout));
 
 	if (!reset_action) {

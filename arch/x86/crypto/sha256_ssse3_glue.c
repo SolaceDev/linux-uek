@@ -53,7 +53,7 @@ static const struct x86_cpu_id module_cpu_ids[] = {
 	X86_MATCH_FEATURE(X86_FEATURE_SSSE3, NULL),
 	{}
 };
-MODULE_DEVICE_TABLE(x86cpu, module_cpu_ids);
+CRYPTO_MODULE_DEVICE_TABLE(x86cpu, module_cpu_ids);
 
 static int _sha256_update(struct shash_desc *desc, const u8 *data,
 			  unsigned int len, sha256_block_fn *sha256_xform)
@@ -447,8 +447,8 @@ static void __exit sha256_ssse3_mod_fini(void)
 	unregister_sha256_ssse3();
 }
 
-module_init(sha256_ssse3_mod_init);
-module_exit(sha256_ssse3_mod_fini);
+crypto_module_init(sha256_ssse3_mod_init);
+crypto_module_exit(sha256_ssse3_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SHA256 Secure Hash Algorithm, Supplemental SSE3 accelerated");

@@ -656,6 +656,22 @@ static int ext4_errno_to_code(int errno)
 	return EXT4_ERR_UNKNOWN;
 }
 
+static bool is_exadata(void)
+{
+	return static_branch_unlikely(&on_exadata);
+}
+
+static bool skip_sb_flush_on_eio(struct super_block *sb)
+{
+	struct ext4_sb_info *sbi = EXT4_SB(sb);
+	int err = sbi->s_first_error_code;
+
+	if (err == 0)
+		err = sbi->s_last_error_code;
+
+	return is_exadata() && err == EIO;
+}
+
 static void save_error_info(struct super_block *sb, int error,
 			    __u32 ino, __u64 block,
 			    const char *func, unsigned int line)
@@ -719,7 +735,7 @@ static void ext4_handle_error(struct super_block *sb, bool force_ro, int error,
 	if (!continue_fs && !sb_rdonly(sb)) {
 		set_bit(EXT4_FLAGS_SHUTDOWN, &EXT4_SB(sb)->s_ext4_flags);
 		if (journal)
-			jbd2_journal_abort(journal, -EIO);
+			jbd2_journal_abort(journal, -error);
 	}
 
 	if (!bdev_read_only(sb->s_bdev)) {
@@ -5855,7 +5871,7 @@ static int ext4_journal_bmap(journal_t *journal, sector_t *block)
 		ext4_msg(journal->j_inode->i_sb, KERN_CRIT,
 			 "journal bmap failed: block %llu ret %d\n",
 			 *block, ret);
-		jbd2_journal_abort(journal, ret ? ret : -EIO);
+		jbd2_journal_abort(journal, ret ? ret : -EFSCORRUPTED);
 		return ret;
 	}
 	*block = map.m_pblk;
@@ -6213,6 +6229,9 @@ static void ext4_update_super(struct super_block *sb)
 static int ext4_commit_super(struct super_block *sb)
 {
 	struct buffer_head *sbh = EXT4_SB(sb)->s_sbh;
+
+	if (skip_sb_flush_on_eio(sb))
+		return -EIO;
 
 	if (!sbh)
 		return -EINVAL;

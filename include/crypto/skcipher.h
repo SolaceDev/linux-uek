@@ -90,6 +90,7 @@ struct crypto_lskcipher {
 	unsigned int chunksize;		\
 	unsigned int statesize;		\
 					\
+	unsigned int uek_reserved_skcipher_alg_common1;	\
 	struct crypto_alg base;		\
 }
 struct skcipher_alg_common SKCIPHER_ALG_COMMON;
@@ -160,6 +161,8 @@ struct skcipher_alg {
 
 	unsigned int walksize;
 
+	UEK_KABI_RESERVE(1)
+	UEK_KABI_RESERVE(2)
 	union {
 		struct SKCIPHER_ALG_COMMON;
 		struct skcipher_alg_common co;
@@ -208,6 +211,8 @@ struct lskcipher_alg {
 		       u8 *dst, unsigned len, u8 *siv, u32 flags);
 	int (*init)(struct crypto_lskcipher *tfm);
 	void (*exit)(struct crypto_lskcipher *tfm);
+	UEK_KABI_RESERVE(1)
+	UEK_KABI_RESERVE(2)
 
 	struct skcipher_alg_common co;
 };
@@ -275,11 +280,11 @@ static inline struct crypto_skcipher *__crypto_skcipher_cast(
  * Return: allocated cipher handle in case of success; IS_ERR() is true in case
  *	   of an error, PTR_ERR() returns the error code.
  */
-struct crypto_skcipher *crypto_alloc_skcipher(const char *alg_name,
-					      u32 type, u32 mask);
+DECLARE_CRYPTO_API(crypto_alloc_skcipher, struct crypto_skcipher *, (const char *alg_name,
+					      u32 type, u32 mask), (alg_name, type, mask));
 
-struct crypto_sync_skcipher *crypto_alloc_sync_skcipher(const char *alg_name,
-					      u32 type, u32 mask);
+DECLARE_CRYPTO_API(crypto_alloc_sync_skcipher, struct crypto_sync_skcipher *, (const char *alg_name,
+					      u32 type, u32 mask), (alg_name, type, mask));
 
 
 /**
@@ -296,8 +301,8 @@ struct crypto_sync_skcipher *crypto_alloc_sync_skcipher(const char *alg_name,
  * Return: allocated cipher handle in case of success; IS_ERR() is true in case
  *	   of an error, PTR_ERR() returns the error code.
  */
-struct crypto_lskcipher *crypto_alloc_lskcipher(const char *alg_name,
-						u32 type, u32 mask);
+DECLARE_CRYPTO_API(crypto_alloc_lskcipher, struct crypto_lskcipher *, (const char *alg_name,
+						u32 type, u32 mask), (alg_name, type, mask));
 
 static inline struct crypto_tfm *crypto_skcipher_tfm(
 	struct crypto_skcipher *tfm)
@@ -348,7 +353,7 @@ static inline void crypto_free_lskcipher(struct crypto_lskcipher *tfm)
  * Return: true when the skcipher is known to the kernel crypto API; false
  *	   otherwise
  */
-int crypto_has_skcipher(const char *alg_name, u32 type, u32 mask);
+DECLARE_CRYPTO_API(crypto_has_skcipher, int, (const char *alg_name, u32 type, u32 mask), (alg_name, type, mask));
 
 static inline const char *crypto_skcipher_driver_name(
 	struct crypto_skcipher *tfm)
@@ -604,8 +609,8 @@ static inline void crypto_lskcipher_clear_flags(struct crypto_lskcipher *tfm,
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-int crypto_skcipher_setkey(struct crypto_skcipher *tfm,
-			   const u8 *key, unsigned int keylen);
+DECLARE_CRYPTO_API(crypto_skcipher_setkey, int, (struct crypto_skcipher *tfm,
+			   const u8 *key, unsigned int keylen), (tfm, key, keylen));
 
 static inline int crypto_sync_skcipher_setkey(struct crypto_sync_skcipher *tfm,
 					 const u8 *key, unsigned int keylen)
@@ -629,8 +634,8 @@ static inline int crypto_sync_skcipher_setkey(struct crypto_sync_skcipher *tfm,
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-int crypto_lskcipher_setkey(struct crypto_lskcipher *tfm,
-			    const u8 *key, unsigned int keylen);
+DECLARE_CRYPTO_API(crypto_lskcipher_setkey, int, (struct crypto_lskcipher *tfm,
+			    const u8 *key, unsigned int keylen), (tfm, key, keylen));
 
 static inline unsigned int crypto_skcipher_min_keysize(
 	struct crypto_skcipher *tfm)
@@ -690,7 +695,7 @@ static inline struct crypto_sync_skcipher *crypto_sync_skcipher_reqtfm(
  *
  * Return: 0 if the cipher operation was successful; < 0 if an error occurred
  */
-int crypto_skcipher_encrypt(struct skcipher_request *req);
+DECLARE_CRYPTO_API(crypto_skcipher_encrypt, int, (struct skcipher_request *req), (req));
 
 /**
  * crypto_skcipher_decrypt() - decrypt ciphertext
@@ -703,7 +708,7 @@ int crypto_skcipher_encrypt(struct skcipher_request *req);
  *
  * Return: 0 if the cipher operation was successful; < 0 if an error occurred
  */
-int crypto_skcipher_decrypt(struct skcipher_request *req);
+DECLARE_CRYPTO_API(crypto_skcipher_decrypt, int, (struct skcipher_request *req), (req));
 
 /**
  * crypto_skcipher_export() - export partial state
@@ -721,7 +726,7 @@ int crypto_skcipher_decrypt(struct skcipher_request *req);
  *
  * Return: 0 if the cipher operation was successful; < 0 if an error occurred
  */
-int crypto_skcipher_export(struct skcipher_request *req, void *out);
+DECLARE_CRYPTO_API(crypto_skcipher_export, int, (struct skcipher_request *req, void *out), (req, out));
 
 /**
  * crypto_skcipher_import() - import partial state
@@ -736,7 +741,7 @@ int crypto_skcipher_export(struct skcipher_request *req, void *out);
  *
  * Return: 0 if the cipher operation was successful; < 0 if an error occurred
  */
-int crypto_skcipher_import(struct skcipher_request *req, const void *in);
+DECLARE_CRYPTO_API(crypto_skcipher_import, int, (struct skcipher_request *req, const void *in), (req, in));
 
 /**
  * crypto_lskcipher_encrypt() - encrypt plaintext
@@ -754,8 +759,8 @@ int crypto_skcipher_import(struct skcipher_request *req, const void *in);
  *	   then this many bytes have been left unprocessed;
  *	   < 0 if an error occurred
  */
-int crypto_lskcipher_encrypt(struct crypto_lskcipher *tfm, const u8 *src,
-			     u8 *dst, unsigned len, u8 *siv);
+DECLARE_CRYPTO_API(crypto_lskcipher_encrypt, int, (struct crypto_lskcipher *tfm, const u8 *src,
+			     u8 *dst, unsigned len, u8 *siv), (tfm, src, dst, len, siv));
 
 /**
  * crypto_lskcipher_decrypt() - decrypt ciphertext
@@ -774,8 +779,8 @@ int crypto_lskcipher_encrypt(struct crypto_lskcipher *tfm, const u8 *src,
  *	   then this many bytes have been left unprocessed;
  *	   < 0 if an error occurred
  */
-int crypto_lskcipher_decrypt(struct crypto_lskcipher *tfm, const u8 *src,
-			     u8 *dst, unsigned len, u8 *siv);
+DECLARE_CRYPTO_API(crypto_lskcipher_decrypt, int, (struct crypto_lskcipher *tfm, const u8 *src,
+			     u8 *dst, unsigned len, u8 *siv), (tfm, src, dst, len, siv));
 
 /**
  * DOC: Symmetric Key Cipher Request Handle

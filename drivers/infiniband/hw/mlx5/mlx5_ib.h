@@ -521,6 +521,7 @@ struct mlx5_ib_qp {
 	struct mlx5_bf	        bf;
 	u8			has_rq:1;
 	u8			is_rss:1;
+	u8			is_ooo_rq:1;
 
 	/* only for user space QPs. For kernel
 	 * we have it from the bf object
@@ -667,6 +668,12 @@ struct mlx5_ib_mkey {
 
 #define mlx5_update_odp_stats(mr, counter_name, value)		\
 	atomic64_add(value, &((mr)->odp_stats.counter_name))
+
+#define mlx5_update_odp_stats_with_handled(mr, counter_name, value)         \
+	do {                                                                \
+		mlx5_update_odp_stats(mr, counter_name, value);             \
+		atomic64_add(1, &((mr)->odp_stats.counter_name##_handled)); \
+	} while (0)
 
 struct mlx5_ib_mr {
 	struct ib_mr ibmr;

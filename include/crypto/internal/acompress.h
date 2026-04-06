@@ -43,6 +43,7 @@ struct acomp_alg {
 
 	unsigned int reqsize;
 
+	UEK_KABI_RESERVE(1)
 	union {
 		struct COMP_ALG_COMMON;
 		struct comp_alg_common calg;
@@ -94,7 +95,8 @@ static inline void __acomp_request_free(struct acomp_req *req)
  *
  * Return:	zero on success; error code in case of error
  */
-int crypto_register_acomp(struct acomp_alg *alg);
+DECLARE_CRYPTO_API(crypto_register_acomp, int,
+	(struct acomp_alg *alg), (alg));
 
 /**
  * crypto_unregister_acomp() -- Unregister asynchronous compression algorithm
@@ -104,9 +106,12 @@ int crypto_register_acomp(struct acomp_alg *alg);
  *
  * @alg:	algorithm definition
  */
-void crypto_unregister_acomp(struct acomp_alg *alg);
+DECLARE_CRYPTO_API(crypto_unregister_acomp, void,
+	(struct acomp_alg *alg), (alg));
 
-int crypto_register_acomps(struct acomp_alg *algs, int count);
-void crypto_unregister_acomps(struct acomp_alg *algs, int count);
+DECLARE_CRYPTO_API(crypto_register_acomps, int,
+	(struct acomp_alg *algs, int count), (algs, count));
+DECLARE_CRYPTO_API(crypto_unregister_acomps, void,
+	(struct acomp_alg *algs, int count), (algs, count));
 
 #endif

@@ -148,13 +148,8 @@ static void output_iv_copyback(struct crypto_async_request *areq)
 			scatterwalk_map_and_copy(sreq->iv, sreq->dst, start,
 						 ivsize, 0);
 		} else {
-			if (sreq->src != sreq->dst) {
-				scatterwalk_map_and_copy(sreq->iv, sreq->src,
-							 start, ivsize, 0);
-			} else {
-				memcpy(sreq->iv, req_info->iv_out, ivsize);
-				kfree(req_info->iv_out);
-			}
+			memcpy(sreq->iv, req_info->iv_out, ivsize);
+			kfree(req_info->iv_out);
 		}
 	}
 }
@@ -241,8 +236,7 @@ static inline int create_ctx_hdr(struct skcipher_request *req, u32 enc,
 	} else {
 		req_info->req.opcode.s.minor = 3;
 		if ((ctx->cipher_type == OTX2_CPT_AES_CBC ||
-		    ctx->cipher_type == OTX2_CPT_DES3_CBC) &&
-		    req->src == req->dst) {
+		    ctx->cipher_type == OTX2_CPT_DES3_CBC)) {
 			req_info->iv_out = kmalloc(ivsize, flags);
 			if (!req_info->iv_out)
 				return -ENOMEM;
@@ -261,7 +255,8 @@ static inline int create_ctx_hdr(struct skcipher_request *req, u32 enc,
 	fctx->enc.enc_ctrl.e.iv_source = OTX2_CPT_FROM_CPTR;
 
 	if (ctx->cipher_type == OTX2_CPT_AES_XTS)
-		memcpy(fctx->enc.encr_key, ctx->enc_key, ctx->key_len * 2);
+		unsafe_memcpy(fctx->enc.encr_key, ctx->enc_key, ctx->key_len * 2,
+			      "fortified memcpy causes -Wrestrict warning");
 	else
 		memcpy(fctx->enc.encr_key, ctx->enc_key, ctx->key_len);
 

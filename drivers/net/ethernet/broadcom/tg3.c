@@ -234,6 +234,14 @@ static int tg3_debug = -1;	/* -1 == use TG3_DEF_MSG_ENABLE as value */
 module_param(tg3_debug, int, 0);
 MODULE_PARM_DESC(tg3_debug, "Tigon3 bitmapped debugging message enable value");
 
+static int short_preamble = 0;
+module_param(short_preamble, int, 0);
+MODULE_PARM_DESC(short_preamble, "Enable short preamble.");
+
+static int bcm5718s_reset = 0;
+module_param(bcm5718s_reset, int, 0);
+MODULE_PARM_DESC(bcm5718s_reset, "Enable BCM5718S reset support.");
+
 #define TG3_DRV_DATA_FLAG_10_100_ONLY	0x0001
 #define TG3_DRV_DATA_FLAG_5705_10_100	0x0002
 
@@ -1008,6 +1016,7 @@ static void tg3_disable_ints(struct tg3 *tp)
 static void tg3_enable_ints(struct tg3 *tp)
 {
 	int i;
+	static int first_called = 1;
 
 	tp->irq_sync = 0;
 	wmb();
@@ -1020,6 +1029,22 @@ static void tg3_enable_ints(struct tg3 *tp)
 		struct tg3_napi *tnapi = &tp->napi[i];
 
 		tw32_mailbox_f(tnapi->int_mbox, tnapi->last_tag << 24);
+
+		/* Because Aboot with unpatched kernel accesses
+		 * registers the old way, if Aboot shell uses the
+		 * network at all and then boots a system, somehow the new
+		 * way of accessing registers will fail to enable the
+		 * interrupt, effectively disabling the interface.
+		 *
+		 * To enable the interrupt, redo the above write
+		 * through mapped memory when this function is _first
+		 * called_, otherwise kernel lockups may occur again.
+		 */
+		if (first_called && tg3_flag(tp, ICH_WORKAROUND)) {
+			first_called = 0;
+			tg3_write32(tp, tnapi->int_mbox, tnapi->last_tag << 24);
+		}
+
 		if (tg3_flag(tp, 1SHOT_MSI))
 			tw32_mailbox_f(tnapi->int_mbox, tnapi->last_tag << 24);
 
@@ -1494,6 +1519,11 @@ static void tg3_mdio_config_5785(struct tg3 *tp)
 static void tg3_mdio_start(struct tg3 *tp)
 {
 	tp->mi_mode &= ~MAC_MI_MODE_AUTO_POLL;
+
+	if(short_preamble) {
+	    tp->mi_mode |= MAC_MI_MODE_SHORT_PREAMBLE;
+	}
+
 	tw32_f(MAC_MI_MODE, tp->mi_mode);
 	udelay(80);
 
@@ -2684,6 +2714,11 @@ static int tg3_phy_reset(struct tg3 *tp)
 			udelay(40);
 			tw32_f(TG3_CPMU_LSPD_1000MB_CLK, val);
 		}
+	}
+
+	if (bcm5718s_reset && tp->phy_id == TG3_PHY_ID_BCM5718S) {
+	    __tg3_writephy(tp, 0x8, 0x10, 0x1d0); /* set internal phy 0x8 to make linkup */
+	    __tg3_writephy(tp, 0x1f, 0x4, 0x5e1); /* enable 10/100 cability of external phy */
 	}
 
 	if (tg3_flag(tp, 5717_PLUS) &&
@@ -9429,6 +9464,15 @@ static int tg3_halt(struct tg3 *tp, int kind, bool silent)
 	}
 
 	return err;
+}
+
+static inline int is_valid_bcm_ether_addr(const u8 *addr)
+{
+	if (!is_valid_ether_addr(addr))
+		return 0;
+	/* Disallow Broadcom default MAC 00:10:18:00:00:00 to avoid conflicts */
+	return (addr[0] || addr[1] != 0x10 || addr[2] != 0x18 ||
+		addr[3] || addr[4] || addr[5]);
 }
 
 static int tg3_set_mac_addr(struct net_device *dev, void *p)
@@ -16385,6 +16429,17 @@ static int tg3_get_invariants(struct tg3 *tp, const struct pci_device_id *ent)
 		} while (bridge);
 	}
 
+	/* The embedded nic in ATI's SB800 can only dma to 32bit
+	 * addresses.  partno(noe) rev 5785041
+	 */
+	if (tg3_asic_rev(tp) == ASIC_REV_5785) {
+		if ((tp->pdev->bus->number == 0) &&
+		    (tp->pdev->devfn == PCI_DEVFN(0x14, 0x6))) {
+			tg3_flag_set(tp, 4G_DMA_ONLY);
+			tg3_flag_set(tp, ICH_WORKAROUND);
+		}
+	}
+
 	if (tg3_asic_rev(tp) == ASIC_REV_5704 ||
 	    tg3_asic_rev(tp) == ASIC_REV_5714)
 		tp->pdev_peer = tg3_find_peer(tp);
@@ -16641,13 +16696,6 @@ static int tg3_get_invariants(struct tg3 *tp, const struct pci_device_id *ent)
 		tp->write32_mbox = tg3_write_indirect_mbox;
 		tp->write32_tx_mbox = tg3_write_indirect_mbox;
 		tp->write32_rx_mbox = tg3_write_indirect_mbox;
-
-		iounmap(tp->regs);
-		tp->regs = NULL;
-
-		pci_read_config_word(tp->pdev, PCI_COMMAND, &pci_cmd);
-		pci_cmd &= ~PCI_COMMAND_MEMORY;
-		pci_write_config_word(tp->pdev, PCI_COMMAND, pci_cmd);
 	}
 	if (tg3_asic_rev(tp) == ASIC_REV_5906) {
 		tp->read32_mbox = tg3_read32_mbox_5906;
@@ -16912,8 +16960,9 @@ static int tg3_get_invariants(struct tg3 *tp, const struct pci_device_id *ent)
 
 	if (tg3_asic_rev(tp) == ASIC_REV_5705 &&
 	    (grc_misc_cfg == GRC_MISC_CFG_BOARD_ID_5788 ||
-	     grc_misc_cfg == GRC_MISC_CFG_BOARD_ID_5788M))
-		tg3_flag_set(tp, IS_5788);
+	     grc_misc_cfg == GRC_MISC_CFG_BOARD_ID_5788M)) {
+		tg3_flag_set(tp, 4G_DMA_ONLY);
+	}
 
 	if (!tg3_flag(tp, IS_5788) &&
 	    tg3_asic_rev(tp) != ASIC_REV_5700)
@@ -17060,28 +17109,18 @@ static int tg3_get_device_address(struct tg3 *tp, u8 *addr)
 		addr[5] = (lo >>  0) & 0xff;
 
 		/* Some old bootcode may report a 0 MAC address in SRAM */
-		addr_ok = is_valid_ether_addr(addr);
+		addr_ok = is_valid_bcm_ether_addr(addr);
 	}
 	if (!addr_ok) {
-		/* Next, try NVRAM. */
-		if (!tg3_flag(tp, NO_NVRAM) &&
-		    !tg3_nvram_read_be32(tp, mac_offset + 0, &hi) &&
-		    !tg3_nvram_read_be32(tp, mac_offset + 4, &lo)) {
-			memcpy(&addr[0], ((char *)&hi) + 2, 2);
-			memcpy(&addr[2], (char *)&lo, sizeof(lo));
-		}
-		/* Finally just fetch it out of the MAC control regs. */
-		else {
-			hi = tr32(MAC_ADDR_0_HIGH);
-			lo = tr32(MAC_ADDR_0_LOW);
+		hi = tr32(MAC_ADDR_0_HIGH);
+		lo = tr32(MAC_ADDR_0_LOW);
 
-			addr[5] = lo & 0xff;
-			addr[4] = (lo >> 8) & 0xff;
-			addr[3] = (lo >> 16) & 0xff;
-			addr[2] = (lo >> 24) & 0xff;
-			addr[1] = hi & 0xff;
-			addr[0] = (hi >> 8) & 0xff;
-		}
+		addr[5] = lo & 0xff;
+		addr[4] = (lo >> 8) & 0xff;
+		addr[3] = (lo >> 16) & 0xff;
+		addr[2] = (lo >> 24) & 0xff;
+		addr[1] = hi & 0xff;
+		addr[0] = (hi >> 8) & 0xff;
 	}
 
 	if (!is_valid_ether_addr(addr))
@@ -17789,7 +17828,7 @@ static int tg3_init_one(struct pci_dev *pdev,
 	 * On 64-bit systems without IOMMU, use 64-bit dma_mask and
 	 * do DMA address check in __tg3_start_xmit().
 	 */
-	if (tg3_flag(tp, IS_5788))
+	if (tg3_flag(tp, 4G_DMA_ONLY) || (tg3_asic_rev(tp) == ASIC_REV_57766))
 		persist_dma_mask = dma_mask = DMA_BIT_MASK(32);
 	else if (tg3_flag(tp, 40BIT_DMA_BUG)) {
 		persist_dma_mask = dma_mask = DMA_BIT_MASK(40);
@@ -17822,6 +17861,16 @@ static int tg3_init_one(struct pci_dev *pdev,
 			dev_err(&pdev->dev,
 				"No usable DMA configuration, aborting\n");
 			goto err_out_apeunmap;
+		}
+
+		if (tg3_asic_rev(tp) == ASIC_REV_57766) {
+			err = dma_set_coherent_mask(&pdev->dev,
+						    DMA_BIT_MASK(31));
+			if (err < 0) {
+				dev_err(&pdev->dev,
+					"Unable to obtain 31 bit DMA for consistent allocations\n");
+				goto err_out_apeunmap;
+			}
 		}
 	}
 

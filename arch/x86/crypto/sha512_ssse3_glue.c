@@ -291,7 +291,7 @@ static const struct x86_cpu_id module_cpu_ids[] = {
 	X86_MATCH_FEATURE(X86_FEATURE_SSSE3, NULL),
 	{}
 };
-MODULE_DEVICE_TABLE(x86cpu, module_cpu_ids);
+CRYPTO_MODULE_DEVICE_TABLE(x86cpu, module_cpu_ids);
 
 static void unregister_sha512_avx2(void)
 {
@@ -331,8 +331,8 @@ static void __exit sha512_ssse3_mod_fini(void)
 	unregister_sha512_ssse3();
 }
 
-module_init(sha512_ssse3_mod_init);
-module_exit(sha512_ssse3_mod_fini);
+crypto_module_init(sha512_ssse3_mod_init);
+crypto_module_exit(sha512_ssse3_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SHA512 Secure Hash Algorithm, Supplemental SSE3 accelerated");

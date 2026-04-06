@@ -95,6 +95,16 @@ config I2C_AMD_MP2
 	  This driver can also be built as modules.  If so, the modules will
 	  be called i2c-amd-mp2-pci and i2c-amd-mp2-plat.
 
+config I2C_ASF
+        tristate "AMD ASF controller works as SMBus master and slave"
+        depends on PCI && ACPI
+        help
+	  If you say yes to this option, support will be included for the
+	  SMBus controller found in the AMD EPIC family.
+
+	  This driver can also be built as modules.  If so, the modules will
+	  be called i2c-asf.
+
 config I2C_HIX5HD2
 	tristate "Hix5hd2 high-speed I2C driver"
 	depends on ARCH_HISI || ARCH_HIX5HD2 || COMPILE_TEST
@@ -1041,6 +1051,16 @@ config I2C_QUP
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called i2c-qup.
+
+config I2C_RD1173
+	tristate "External SPI to Lattice I2C adapter device"
+	depends on SPI && REGMAP
+	help
+	  If you say yes to this option, support will be included for the
+	  SPI to Lattice I2C-bus adapter device.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called i2c-rd1173.
 
 config I2C_RIIC
 	tristate "Renesas RIIC adapter"
