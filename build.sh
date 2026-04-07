@@ -8,6 +8,25 @@ PATH=${COMPILER_PATH}:$PATH
 VERSION=$(make ARCH=x86_64 kernelversion)
 [[ -z "$VERSION" ]] && { echo "Error: Couldn't determine kernel version"; exit 1; }
 
+# Read the UEK version suffix from the most recent Oracle UEK merge commit
+# in the git history (e.g. "Merge tag 'v6.12.0-200.74.27' into solace-uek-6.12") 
+# so it can be embedded in # CONFIG_LOCALVERSION, producing a kernel version like
+# 6.12.0-200.74.27.solos1.
+read_uek_suffix() {
+    local merge_subject uek_tag
+    merge_subject=$(git log --merges --format="%s" --grep="Merge tag 'v${VERSION}-" | head -1)
+    if [[ -z "$merge_subject" ]]; then
+        echo "Warning: No UEK merge commit found for v${VERSION}, UEK suffix will be omitted"
+        UEK_SUFFIX=""
+        return
+    fi
+    uek_tag=$(echo "$merge_subject" | sed "s/Merge tag '\\(v${VERSION}-[^']*\\)'.*/\\1/")
+    UEK_SUFFIX="${uek_tag#v${VERSION}-}"
+    echo "Found UEK merge commit for tag ${uek_tag}, UEK suffix: ${UEK_SUFFIX}"
+}
+read_uek_suffix
+
+VERSION_WITH_UEK="${VERSION}${UEK_SUFFIX:+-${UEK_SUFFIX}}"
 VERSION_PATCH=${VERSION%.*}
 LOAD_DIR="/home/public/RND/loads/linux/${VERSION_PATCH}"
 
@@ -19,7 +38,7 @@ find_latest_build() {
         while IFS= read -r -d '' dir; do
             local id="${dir##*.solos}"
             [[ "$id" =~ ^[0-9]+$ ]] && ((id > last_id)) && last_id=$id
-        done < <(find "${LOAD_DIR}" -maxdepth 1 -type d -name "${VERSION}.solos*" -print0)
+        done < <(find "${LOAD_DIR}" -maxdepth 1 -type d -name "${VERSION_WITH_UEK}.solos*" -print0)
     fi
     echo "$last_id"
 }
@@ -27,8 +46,9 @@ find_latest_build() {
 # Update .config with new build version
 update_config_version() {
     local build_id=$1
+    local localversion="${UEK_SUFFIX:+-${UEK_SUFFIX}}.solos${build_id}.x86_64"
     [[ -f .config ]] && mv -f .config old.config
-    sed "s/^CONFIG_LOCALVERSION=.*$/CONFIG_LOCALVERSION=\".solos${build_id}\"/" \
+    sed "s/^CONFIG_LOCALVERSION=.*$/CONFIG_LOCALVERSION=\"${localversion}\"/" \
         old.config > .config
 }
 
@@ -39,7 +59,7 @@ setup_version() {
     echo "Last build ID: ${last_build_id}"
 
     NEW_BUILD_ID=$((last_build_id + 1))
-    NEW_VERSION="${VERSION}.solos${NEW_BUILD_ID}"
+    NEW_VERSION="${VERSION_WITH_UEK}.solos${NEW_BUILD_ID}"
     echo "New version: ${NEW_VERSION}"
 
     update_config_version "$NEW_BUILD_ID"
