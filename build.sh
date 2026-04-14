@@ -46,7 +46,7 @@ find_latest_build() {
 # Update .config with new build version
 update_config_version() {
     local build_id=$1
-    local localversion="${UEK_SUFFIX:+-${UEK_SUFFIX}}.solos${build_id}.x86_64"
+    local localversion="${UEK_SUFFIX:+-${UEK_SUFFIX}}.solos${build_id}"
     [[ -f .config ]] && mv -f .config old.config
     sed "s/^CONFIG_LOCALVERSION=.*$/CONFIG_LOCALVERSION=\"${localversion}\"/" \
         old.config > .config
