@@ -286,7 +286,8 @@ static int ionic_counter_dealloc(struct rdma_counter *counter)
 }
 
 static int ionic_counter_bind_qp(struct rdma_counter *counter,
-				 struct ib_qp *ibqp)
+				 struct ib_qp *ibqp,
+				 u32 port)
 {
 	struct ionic_ibdev *dev = to_ionic_ibdev(counter->device);
 	struct ionic_qp *qp = to_ionic_qp(ibqp);
@@ -302,7 +303,7 @@ static int ionic_counter_bind_qp(struct rdma_counter *counter,
 	return 0;
 }
 
-static int ionic_counter_unbind_qp(struct ib_qp *ibqp)
+static int ionic_counter_unbind_qp(struct ib_qp *ibqp, u32 port)
 {
 	struct ionic_qp *qp = to_ionic_qp(ibqp);
 

@@ -35,9 +35,7 @@ enum {
 	MLX5_EQ_STATE_ALWAYS_ARMED	= 0xb,
 };
 
-enum {
-	MLX5_EQ_DOORBEL_OFFSET	= 0x40,
-};
+#define MLX5_EQ_DOORBELL_OFFSET 0x40
 
 /* budget must be smaller than MLX5_NUM_SPARE_EQE to guarantee that we update
  * the ci before we polled all the entries in the EQ. MLX5_NUM_SPARE_EQE is
@@ -331,7 +329,7 @@ create_map_eq(struct mlx5_core_dev *dev, struct mlx5_eq *eq,
 
 	eqc = MLX5_ADDR_OF(create_eq_in, in, eq_context_entry);
 	MLX5_SET(eqc, eqc, log_eq_size, eq->fbc.log_sz);
-	MLX5_SET(eqc, eqc, uar_page, priv->uar->index);
+	MLX5_SET(eqc, eqc, uar_page, priv->bfreg.up->index);
 	MLX5_SET(eqc, eqc, intr, vecidx);
 	MLX5_SET(eqc, eqc, log_page_size,
 		 eq->frag_buf.page_shift - MLX5_ADAPTER_PAGE_SHIFT);
@@ -344,7 +342,7 @@ create_map_eq(struct mlx5_core_dev *dev, struct mlx5_eq *eq,
 	eq->eqn = MLX5_GET(create_eq_out, out, eq_number);
 	eq->irqn = pci_irq_vector(dev->pdev, vecidx);
 	eq->dev = dev;
-	eq->doorbell = priv->uar->map + MLX5_EQ_DOORBEL_OFFSET;
+	eq->doorbell = priv->bfreg.up->map + MLX5_EQ_DOORBELL_OFFSET;
 
 	err = mlx5_debug_eq_add(dev, eq);
 	if (err)
@@ -968,6 +966,12 @@ static void destroy_comp_eq(struct mlx5_core_dev *dev, struct mlx5_eq_comp *eq, 
 {
 	struct mlx5_eq_table *table = dev->priv.eq_table;
 
+#ifndef WITHOUT_ORACLE_EXTENSIONS
+	if (irq_set_affinity_notifier(eq->core.irqn, NULL))
+		mlx5_core_warn(dev, "failed to unset EQ 0x%x to irq 0x%x affinty\n",
+			      eq->core.eqn, eq->core.irqn);
+#endif /* !WITHOUT_ORACLE_EXTENSIONS */
+
 	xa_erase(&table->comp_eqs, vecidx);
 	mlx5_eq_disable(dev, &eq->core, &eq->irq_nb);
 	if (destroy_unmap_eq(dev, &eq->core))
@@ -1003,6 +1007,7 @@ static int create_comp_eq(struct mlx5_core_dev *dev, u16 vecidx)
 	struct mlx5_irq *irq;
 	int nent;
 	int err;
+	int ret;
 
 	lockdep_assert_held(&table->comp_lock);
 	if (table->curr_comp_eqs == table->max_comp_eqs) {
@@ -1048,6 +1053,18 @@ static int create_comp_eq(struct mlx5_core_dev *dev, u16 vecidx)
 	err = xa_err(xa_store(&table->comp_eqs, vecidx, eq, GFP_KERNEL));
 	if (err)
 		goto disable_eq;
+
+#ifndef WITHOUT_ORACLE_EXTENSIONS
+	eq->notify.notify = mlx5_eq_reap_irq_notify;
+	eq->notify.release = mlx5_eq_reap_irq_release;
+	ret = irq_set_affinity_notifier(eq->core.irqn, &eq->notify);
+	if (ret) {
+		mlx5_core_warn(dev, "mlx5_eq_reap_irq_nofifier: EQ 0x%x irqn = 0x%x irq_set_affinity_notifier failed: %d\n",
+			      eq->core.eqn, eq->core.irqn, ret);
+	}
+	mlx5_core_dbg(dev, "mlx5_eq_reap_irq_nofifier: EQ 0x%x irqn = 0x%x irq_set_affinity_notifier set.\n",
+		     eq->core.eqn, eq->core.irqn);
+#endif /* !WITHOUT_ORACLE_EXTENSIONS */
 
 	table->curr_comp_eqs++;
 	return eq->core.eqn;

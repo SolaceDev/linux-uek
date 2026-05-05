@@ -8206,6 +8206,12 @@ S:	Maintained
 F:	Documentation/devicetree/bindings/memory-controllers/nuvoton,npcm-memory-controller.yaml
 F:	drivers/edac/npcm_edac.c
 
+EDAC-OCTEONTX
+M:	Vasyl Gomonovych <vgomonovych@marvell.com>
+M:	Piyush Malgujar <pmalgujar@marvell.com>
+S:	Maintained
+F:	drivers/edac/octeontx_edac.c
+
 EDAC-PASEMI
 M:	Egor Martovetsky <egor@pasemi.com>
 L:	linux-edac@vger.kernel.org
@@ -14822,12 +14828,6 @@ S:	Supported
 F:	Documentation/leds/leds-mlxcpld.rst
 F:	drivers/leds/leds-mlxcpld.c
 F:	drivers/leds/leds-mlxreg.c
-
-MELLANOX PLATFORM DRIVER
-M:	Vadim Pasternak <vadimp@nvidia.com>
-L:	platform-driver-x86@vger.kernel.org
-S:	Supported
-F:	drivers/platform/x86/mlx-platform.c
 
 MEMBARRIER SUPPORT
 M:	Mathieu Desnoyers <mathieu.desnoyers@efficios.com>

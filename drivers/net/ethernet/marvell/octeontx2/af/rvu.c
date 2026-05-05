@@ -58,6 +58,11 @@ static char *kpu_profile; /* KPU profile name */
 module_param(kpu_profile, charp, 0000);
 MODULE_PARM_DESC(kpu_profile, "KPU profile name string");
 
+static int max_vfs = -1;
+module_param(max_vfs, int, 0444);
+MODULE_PARM_DESC(max_vfs,
+		 "Reduce the number of VFs initialized by the driver");
+
 static void rvu_setup_hw_capabilities(struct rvu *rvu)
 {
 	struct rvu_hwinfo *hw = rvu->hw;
@@ -3304,6 +3309,10 @@ static int rvu_enable_sriov(struct rvu *rvu)
 
 	vfs = pci_sriov_get_totalvfs(pdev);
 
+	/* Clamp vfs to max_vfs iff set */
+	if (max_vfs >= 0 && vfs > max_vfs)
+		vfs = max_vfs;
+
 	/* Limit VFs in case we have more VFs than LBK channels available. */
 	if (vfs > chans)
 		vfs = chans;
@@ -3529,11 +3538,22 @@ static void rvu_remove(struct pci_dev *pdev)
 	devm_kfree(&pdev->dev, rvu);
 }
 
+static void rvu_shutdown(struct pci_dev *pdev)
+{
+	struct rvu *rvu = pci_get_drvdata(pdev);
+
+	if (!rvu)
+		return;
+
+	rvu_clear_rvum_blk_revid(rvu);
+}
+
 static struct pci_driver rvu_driver = {
 	.name = DRV_NAME,
 	.id_table = rvu_id_table,
 	.probe = rvu_probe,
 	.remove = rvu_remove,
+	.shutdown = rvu_shutdown,
 };
 
 static int __init rvu_init_module(void)

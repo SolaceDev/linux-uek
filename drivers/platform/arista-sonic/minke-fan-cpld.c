@@ -28,8 +28,8 @@
 #define DRIVER_NAME "minke-fan-cpld"
 
 #define LED_NAME_MAX_SZ 20
-#define MAX_SLOT_COUNT 5
-#define MAX_FAN_COUNT 6
+#define MAX_SLOT_COUNT 8
+#define MAX_FAN_COUNT 8
 
 #define MINOR_VERSION_REG  0x00
 #define MAJOR_VERSION_REG  0x01
@@ -49,18 +49,6 @@
    ((FAN_BASE_REG((Slot)->index)) + ((Fan)->index) * 8 + (Inner) * 2 + 3)
 
 #define FAN_ID_REG(Slot)  ((Slot)->cpld->info->id_base_reg + (Slot)->index)
-#define FAN_PRESENT_REG   0x70
-#define FAN_OK_REG        0x71
-
-#define FAN_BLUE_LED_REG  0x73
-#define FAN_AMBER_LED_REG 0x74
-#define FAN_GREEN_LED_REG 0x75
-#define FAN_RED_LED_REG   0x76
-
-#define FAN_INT_REG       0x77
-#define FAN_ID_CHNG_REG   0x78
-#define FAN_PRES_CHNG_REG 0x80
-#define FAN_OK_CHNG_REG   0x82
 
 #define FAN_INT_OK   BIT(0)
 #define FAN_INT_PRES BIT(1)
@@ -73,7 +61,7 @@
 
 #define FAN_MAX_PWM 255
 
-#define FAN_ID_MASK    0x1F
+#define FAN_ID_MASK    0x3F
 #define FAN_ID_UNKNOWN (FAN_ID_MASK + 1)
 
 #define IS_LR_CPLD(Cpld) ((Cpld)->fans_per_slot == 2)
@@ -103,6 +91,7 @@ static struct workqueue_struct *pali_cpld_workqueue;
 enum cpld_type {
    PALI2_CPLD = 0,
    MINKE_CPLD = 1,
+   RUNDLE_CPLD = 2,
 };
 
 struct fan_id {
@@ -116,8 +105,19 @@ struct cpld_info {
    u8 fan_count;
    u32 tach_hz;
    bool left_right;
+   u8 pwm_min;
    const struct fan_id *fan_ids;
    u8 id_base_reg;
+   u8 present_reg;
+   u8 ok_reg;
+   u8 blue_led_reg;
+   u8 amber_led_reg;
+   u8 green_led_reg;
+   u8 red_led_reg;
+   u8 int_reg;
+   u8 id_chng_reg;
+   u8 pres_chng_reg;
+   u8 ok_chng_reg;
 };
 
 struct cpld_fan {
@@ -164,20 +164,28 @@ struct cpld_data {
 };
 
 static const struct fan_id mk_fan_ids[] = {
-   [0b00000]        = { "FAN-7021H-RED",   2 },
-   [0b00001]        = { "FAN-7021H-RED",   2 },
-   [0b01000]        = { "FAN-7022HQ-RED",  2 },
-   [0b01001]        = { "FAN-7022HQ-RED",  2 },
-   [0b10000]        = { "FAN-7021H-BLUE",  2 },
-   [0b10001]        = { "FAN-7021H-BLUE",  2 },
-   [0b11000]        = { "FAN-7022HQ-BLUE", 2 },
-   [0b11001]        = { "FAN-7022HQ-BLUE", 2 },
+   [0b000000]       = { "FAN-7021H-RED",   2 },
+   [0b000001]       = { "FAN-7021H-RED",   2 },
+   [0b001000]       = { "FAN-7022HQ-RED",  2 },
+   [0b001001]       = { "FAN-7022HQ-RED",  2 },
+   [0b010000]       = { "FAN-7021H-BLUE",  2 },
+   [0b010001]       = { "FAN-7021H-BLUE",  2 },
+   [0b011000]       = { "FAN-7022HQ-BLUE", 2 },
+   [0b011001]       = { "FAN-7022HQ-BLUE", 2 },
+   [0b100000]       = { "FAN-7311H-RED",   2 },
+   [0b100001]       = { "FAN-7311H-RED",   2 },
    [FAN_ID_UNKNOWN] = { "Unknown",         2 },
 };
 
 static const struct fan_id minke_fan_ids[] = {
    [0b000000]       = { "FAN-7016H-BLUE",  2 },
    [0b000001]       = { "FAN-7016H-BLUE",  2 },
+   [FAN_ID_UNKNOWN] = { "Unknown",         2 },
+};
+
+static const struct fan_id rundle_fan_ids[] = {
+   [0b000010]       = { "FAN-7310H-RED",   2 },
+   [0b000011]       = { "FAN-7310H-RED",   2 },
    [FAN_ID_UNKNOWN] = { "Unknown",         2 },
 };
 
@@ -188,8 +196,19 @@ static const struct cpld_info cpld_infos[] = {
       .fan_count = 4,
       .tach_hz = 100000,
       .left_right = false,
+      .pwm_min = 0x1a,
       .fan_ids = mk_fan_ids,
       .id_base_reg = 0x61,
+      .present_reg = 0x70,
+      .ok_reg = 0x71,
+      .blue_led_reg = 0x73,
+      .amber_led_reg = 0x74,
+      .green_led_reg = 0x75,
+      .red_led_reg = 0x76,
+      .int_reg = 0x77,
+      .id_chng_reg = 0x78,
+      .pres_chng_reg = 0x80,
+      .ok_chng_reg = 0x82,
    },
    [MINKE_CPLD] = {
       .name = "minke",
@@ -197,8 +216,39 @@ static const struct cpld_info cpld_infos[] = {
       .fan_count = 6,
       .tach_hz = 100000,
       .left_right = true,
+      .pwm_min = 0x00,
       .fan_ids = minke_fan_ids,
       .id_base_reg = 0x60,
+      .present_reg = 0x70,
+      .ok_reg = 0x71,
+      .blue_led_reg = 0x73,
+      .amber_led_reg = 0x74,
+      .green_led_reg = 0x75,
+      .red_led_reg = 0x76,
+      .int_reg = 0x77,
+      .id_chng_reg = 0x78,
+      .pres_chng_reg = 0x80,
+      .ok_chng_reg = 0x82,
+   },
+   [RUNDLE_CPLD] = {
+      .name = "rundle",
+      .slot_count = 8,
+      .fan_count = 8,
+      .tach_hz = 100000,
+      .left_right = false,
+      .pwm_min = 0x00,
+      .fan_ids = rundle_fan_ids,
+      .id_base_reg = 0x91,
+      .present_reg = 0xA0,
+      .ok_reg = 0xA1,
+      .blue_led_reg = 0xA3,
+      .amber_led_reg = 0xA4,
+      .green_led_reg = 0xA5,
+      .red_led_reg = 0xA6,
+      .int_reg = 0xA7,
+      .id_chng_reg = 0xB0,
+      .pres_chng_reg = 0xB1,
+      .ok_chng_reg = 0xB2,
    },
 };
 
@@ -274,6 +324,31 @@ static s32 cpld_write_byte(struct cpld_data *cpld, u8 reg, u8 byte)
    return err;
 }
 
+static u8 cpld_scale_to_hw_pwm(struct cpld_data *cpld, u8 pwm)
+{
+   u8 min = cpld->info->pwm_min;
+
+   if (!min)
+      return pwm;
+
+   return min + DIV_ROUND_CLOSEST((unsigned int)pwm * (FAN_MAX_PWM - min),
+                FAN_MAX_PWM);
+}
+
+static u8 cpld_scale_from_hw_pwm(struct cpld_data *cpld, u8 pwm)
+{
+   u8 min = cpld->info->pwm_min;
+
+   if (!min)
+      return pwm;
+
+   if (pwm <= min)
+      return 0;
+
+   return DIV_ROUND_CLOSEST((unsigned int)(pwm - min) * FAN_MAX_PWM,
+             FAN_MAX_PWM - min);
+}
+
 static void cpld_work_start(struct cpld_data *cpld)
 {
    if (poll_interval) {
@@ -325,19 +400,19 @@ static int cpld_update_leds(struct cpld_data *cpld)
          cpld->red_led |= (1 << i);
    }
 
-   err = cpld_write_byte(cpld, FAN_BLUE_LED_REG, cpld->blue_led);
+   err = cpld_write_byte(cpld, cpld->info->blue_led_reg, cpld->blue_led);
    if (err)
       return err;
 
-   err = cpld_write_byte(cpld, FAN_AMBER_LED_REG, cpld->amber_led);
+   err = cpld_write_byte(cpld, cpld->info->amber_led_reg, cpld->amber_led);
    if (err)
       return err;
 
-   err = cpld_write_byte(cpld, FAN_GREEN_LED_REG, cpld->green_led);
+   err = cpld_write_byte(cpld, cpld->info->green_led_reg, cpld->green_led);
    if (err)
       return err;
 
-   err = cpld_write_byte(cpld, FAN_RED_LED_REG, cpld->red_led);
+   err = cpld_write_byte(cpld, cpld->info->red_led_reg, cpld->red_led);
    if (err)
       return err;
 
@@ -355,30 +430,30 @@ static int cpld_update(struct cpld_data *cpld)
 
    pali_dbg(cpld, "polling cpld information\n");
 
-   err = cpld_read_byte(cpld, FAN_INT_REG, &interrupt);
+   err = cpld_read_byte(cpld, cpld->info->int_reg, &interrupt);
    if (err)
       goto fail;
 
    if (interrupt & FAN_INT_ID) {
-      err = cpld_read_byte(cpld, FAN_ID_CHNG_REG, &id_chng);
+      err = cpld_read_byte(cpld, cpld->info->id_chng_reg, &id_chng);
       if (err)
          goto fail;
    }
 
    if (interrupt & FAN_INT_OK) {
-      err = cpld_read_byte(cpld, FAN_OK_CHNG_REG, &ok_chng);
+      err = cpld_read_byte(cpld, cpld->info->ok_chng_reg, &ok_chng);
       if (err)
          goto fail;
-      err = cpld_read_byte(cpld, FAN_OK_REG, &cpld->ok);
+      err = cpld_read_byte(cpld, cpld->info->ok_reg, &cpld->ok);
       if (err)
          goto fail;
    }
 
    if (interrupt & FAN_INT_PRES) {
-      err = cpld_read_byte(cpld, FAN_PRES_CHNG_REG, &pres_chng);
+      err = cpld_read_byte(cpld, cpld->info->pres_chng_reg, &pres_chng);
       if (err)
          goto fail;
-      err = cpld_read_byte(cpld, FAN_OK_REG, &cpld->present);
+      err = cpld_read_byte(cpld, cpld->info->present_reg, &cpld->present);
       if (err)
          goto fail;
    }
@@ -389,12 +464,15 @@ static int cpld_update(struct cpld_data *cpld)
       if ((interrupt & FAN_INT_PRES) && (pres_chng & (1 << i))) {
          if (slot->present && (cpld->present & (1 << i))) {
             str = "hotswapped";
+            cpld_read_slot_id(slot);
          } else if (!slot->present && (cpld->present & (1 << i))) {
             str = "plugged";
+            cpld_read_slot_id(slot);
             slot->present = true;
          } else {
             str = "unplugged";
             slot->present = false;
+            slot->fan_id = &cpld->info->fan_ids[FAN_ID_UNKNOWN];
          }
          pali_info(cpld, "fan in slot %d was %s\n", i + 1, str);
       }
@@ -427,9 +505,9 @@ static int cpld_update(struct cpld_data *cpld)
    }
 
    // FIXME: clear registers by setting them to 0
-   cpld_write_byte(cpld, FAN_ID_CHNG_REG, id_chng);
-   cpld_write_byte(cpld, FAN_OK_CHNG_REG, ok_chng);
-   cpld_write_byte(cpld, FAN_PRES_CHNG_REG, pres_chng);
+   cpld_write_byte(cpld, cpld->info->id_chng_reg, id_chng);
+   cpld_write_byte(cpld, cpld->info->ok_chng_reg, ok_chng);
+   cpld_write_byte(cpld, cpld->info->pres_chng_reg, pres_chng);
 
    if (managed_leds)
       err = cpld_update_leds(cpld);
@@ -442,17 +520,18 @@ static s32 cpld_write_fan_pwm(struct cpld_fan *fan, u8 pwm)
 {
    struct cpld_slot *slot = slot_from_fan(fan);
    struct cpld_data *cpld = cpld_from_slot(slot);
+   u8 hw_pwm = cpld_scale_to_hw_pwm(cpld, pwm);
    int err;
 
    if (IS_LR_CPLD(cpld)) {
-      err = cpld_write_byte(cpld, FAN_LR_PWM_REG(slot, fan, 0), pwm);
+      err = cpld_write_byte(cpld, FAN_LR_PWM_REG(slot, fan, 0), hw_pwm);
       if (err)
          return err;
-      err = cpld_write_byte(cpld, FAN_LR_PWM_REG(slot, fan, 1), pwm);
+      err = cpld_write_byte(cpld, FAN_LR_PWM_REG(slot, fan, 1), hw_pwm);
       if (err)
          return err;
    } else {
-      err = cpld_write_byte(cpld, FAN_PWM_REG(slot->index), pwm);
+      err = cpld_write_byte(cpld, FAN_PWM_REG(slot->index), hw_pwm);
       if (err)
          return err;
    }
@@ -469,7 +548,7 @@ static int cpld_read_present(struct cpld_data *cpld)
    int err;
    int i;
 
-   err = cpld_read_byte(cpld, FAN_PRESENT_REG, &cpld->present);
+   err = cpld_read_byte(cpld, cpld->info->present_reg, &cpld->present);
    if (err)
       return err;
 
@@ -487,7 +566,7 @@ static int cpld_read_fault(struct cpld_data *cpld)
    int err;
    int i;
 
-   err = cpld_read_byte(cpld, FAN_OK_REG, &cpld->ok);
+   err = cpld_read_byte(cpld, cpld->info->ok_reg, &cpld->ok);
    if (err)
       return err;
 
@@ -587,6 +666,9 @@ static s32 cpld_read_fan_pwm(struct cpld_fan *fan)
       pwm_inner = pwm_outer;
    }
 
+   pwm_outer = cpld_scale_from_hw_pwm(cpld, pwm_outer);
+   pwm_inner = cpld_scale_from_hw_pwm(cpld, pwm_inner);
+
    fan->pwm_outer = pwm_outer;
    fan->pwm_inner = pwm_inner;
 
@@ -642,19 +724,19 @@ static s32 cpld_write_slot_led(struct cpld_slot *slot, u8 val)
    else
       cpld->red_led &= ~(1 << slot->index);
 
-   err = cpld_write_byte(cpld, FAN_BLUE_LED_REG, cpld->blue_led);
+   err = cpld_write_byte(cpld, cpld->info->blue_led_reg, cpld->blue_led);
    if (err)
       return err;
 
-   err = cpld_write_byte(cpld, FAN_AMBER_LED_REG, cpld->amber_led);
+   err = cpld_write_byte(cpld, cpld->info->amber_led_reg, cpld->amber_led);
    if (err)
       return err;
 
-   err = cpld_write_byte(cpld, FAN_GREEN_LED_REG, cpld->green_led);
+   err = cpld_write_byte(cpld, cpld->info->green_led_reg, cpld->green_led);
    if (err)
       return err;
 
-   err = cpld_write_byte(cpld, FAN_RED_LED_REG, cpld->red_led);
+   err = cpld_write_byte(cpld, cpld->info->red_led_reg, cpld->red_led);
 
    return err;
 }
@@ -717,12 +799,14 @@ static ssize_t cpld_fan_pwm_show(struct device *dev, struct device_attribute *da
 
    mutex_lock(&cpld->lock);
    err = cpld_read_fan_pwm(fan);
-   mutex_unlock(&cpld->lock);
-   if (err)
+   if (err) {
+      mutex_unlock(&cpld->lock);
       return err;
+   }
 
    pwm = slot->dual ? fan->pwm_outer : fan->pwm_inner;
-   return sprintf(buf, "%hhu\n", pwm);
+   mutex_unlock(&cpld->lock);
+   return sysfs_emit(buf, "%hhu\n", pwm);
 }
 
 static ssize_t cpld_fan_pwm_store(struct device *dev, struct device_attribute *da,
@@ -757,14 +841,13 @@ static ssize_t cpld_fan_present_show(struct device *dev,
    int err;
 
    if (!poll_interval) {
-      mutex_lock(&cpld->lock);
       err = cpld_read_present(cpld);
-      mutex_unlock(&cpld->lock);
-      if (err)
+      if (err) {
          return err;
+      }
    }
-
-   return sprintf(buf, "%d\n", slot->present);
+   err = sysfs_emit(buf, "%d\n", slot->present);
+   return err;
 }
 
 static ssize_t cpld_fan_id_show(struct device *dev, struct device_attribute *da,
@@ -777,14 +860,13 @@ static ssize_t cpld_fan_id_show(struct device *dev, struct device_attribute *da,
    int err = 0;
 
    if (!poll_interval) {
-      mutex_lock(&cpld->lock);
       err = cpld_read_slot_id(slot);
-      mutex_unlock(&cpld->lock);
-      if (err)
+      if (err) {
          return err;
+      }
    }
-
-   return sprintf(buf, "%hhu\n", slot->ident);
+   err = sysfs_emit(buf, "%hhu\n", slot->ident);
+   return err;
 }
 
 static ssize_t cpld_fan_fault_show(struct device *dev, struct device_attribute *da,
@@ -797,14 +879,14 @@ static ssize_t cpld_fan_fault_show(struct device *dev, struct device_attribute *
    int err;
 
    if (!poll_interval) {
-      mutex_lock(&cpld->lock);
       err = cpld_read_fault(cpld);
-      mutex_unlock(&cpld->lock);
-      if (err)
+      if (err) {
          return err;
+      }
    }
 
-   return sprintf(buf, "%d\n", !slot->ok);
+   err = sysfs_emit(buf, "%d\n", !slot->ok);
+   return err;
 }
 
 static ssize_t cpld_fan_tach_show(struct device *dev, struct device_attribute *da,
@@ -819,35 +901,44 @@ static ssize_t cpld_fan_tach_show(struct device *dev, struct device_attribute *d
    int rpms;
 
    mutex_lock(&cpld->lock);
+
    err = cpld_read_fan_tach(fan);
-   mutex_unlock(&cpld->lock);
-   if (err)
+   if (err) {
+      mutex_unlock(&cpld->lock);
       return err;
+   }
 
    tach = slot->dual ? fan->tach_outer : fan->tach_inner;
    if (!tach) {
+      mutex_unlock(&cpld->lock);
       return -EINVAL;
    }
 
    rpms = ((cpld->info->tach_hz * 60) / tach) / slot->fan_id->pulses;
 
-   return sprintf(buf, "%d\n", rpms);
+   err = sysfs_emit(buf, "%d\n", rpms);
+   mutex_unlock(&cpld->lock);
+   return err;
 }
 
 static ssize_t cpld_fan_led_show(struct device *dev, struct device_attribute *da,
                                  char *buf)
 {
    struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
+   struct cpld_data *cpld = dev_get_drvdata(dev);
    struct cpld_fan *fan = fan_from_dev(dev, attr->index);
    struct cpld_slot *slot = slot_from_fan(fan);
    int err;
    u8 val;
 
+   mutex_lock(&cpld->lock);
    err = cpld_read_slot_led(slot, &val);
-   if (err)
+   if (err) {
+      mutex_unlock(&cpld->lock);
       return err;
-
-   return sprintf(buf, "%hhu\n", val);
+   }
+   mutex_unlock(&cpld->lock);
+   return sysfs_emit(buf, "%hhu\n", val);
 }
 
 static ssize_t cpld_fan_led_store(struct device *dev, struct device_attribute *da,
@@ -882,7 +973,8 @@ static ssize_t cpld_fan_airflow_show(struct device *dev,
    struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
    struct cpld_fan *fan = fan_from_dev(dev, attr->index);
    struct cpld_slot *slot = slot_from_fan(fan);
-   return sprintf(buf, "%s\n", (slot->forward) ? "forward" : "reverse");
+
+   return sysfs_emit(buf, "%s\n", (slot->forward) ? "forward" : "reverse");
 }
 
 static ssize_t cpld_fan_model_show(struct device *dev,
@@ -892,7 +984,16 @@ static ssize_t cpld_fan_model_show(struct device *dev,
    struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
    struct cpld_fan *fan = fan_from_dev(dev, attr->index);
    struct cpld_slot *slot = slot_from_fan(fan);
-   return sprintf(buf, "%s\n", (slot->present) ? slot->fan_id->model : "Not present");
+   int err = 0;
+
+   if (!poll_interval) {
+      err = cpld_read_slot_id(slot);
+      if (err) {
+         return err;
+      }
+   }
+
+   return sysfs_emit(buf, "%s\n", (slot->present) ? slot->fan_id->model : "Not present");
 }
 
 #define FAN_DEVICE_ATTR(_name)                                                \
@@ -958,7 +1059,7 @@ static ssize_t cpld_revision_show(struct device *dev, struct device_attribute *a
                                   char *buf)
 {
    struct cpld_data *cpld = dev_get_drvdata(dev);
-   return sprintf(buf, "%02x.%02x\n", cpld->major, cpld->minor);
+   return sysfs_emit(buf, "%02x.%02x\n", cpld->major, cpld->minor);
 }
 
 DEVICE_ATTR(cpld_revision, S_IRUGO, cpld_revision_show, NULL);
@@ -1017,11 +1118,11 @@ static int cpld_init(struct cpld_data *cpld)
    pali_info(cpld, "%s CPLD version %02x.%02x\n",
              cpld->info->name, cpld->major, cpld->minor);
 
-   err = cpld_read_byte(cpld, FAN_PRESENT_REG, &cpld->present);
+   err = cpld_read_byte(cpld, cpld->info->present_reg, &cpld->present);
    if (err)
       return err;
 
-   err = cpld_read_byte(cpld, FAN_OK_REG, &cpld->ok);
+   err = cpld_read_byte(cpld, cpld->info->ok_reg, &cpld->ok);
    if (err)
       return err;
 
@@ -1031,30 +1132,36 @@ static int cpld_init(struct cpld_data *cpld)
       slot->index = i;
       slot->present = !!(cpld->present & (1 << i));
       slot->ok = !!(cpld->ok & (1 << i));
+      slot->fan_id = &cpld->info->fan_ids[FAN_ID_UNKNOWN];
+
       if (slot->present) {
          cpld_read_slot_id(slot);
-         for (j = 0; j < cpld->fans_per_slot; j++) {
-            fan = &slot->fans[j];
-            fan->slot = slot;
-            fan->index = j;
-            fan->global_index = i * cpld->fans_per_slot + j;
+      }
+
+      for (j = 0; j < cpld->fans_per_slot; j++) {
+         fan = &slot->fans[j];
+         fan->slot = slot;
+         fan->index = j;
+         fan->global_index = i * cpld->fans_per_slot + j;
+
+         if (slot->present) {
             cpld_read_fan_tach(fan);
             cpld_read_fan_pwm(fan);
             if (safe_mode)
                cpld_write_fan_pwm(fan, FAN_MAX_PWM);
          }
+      }
 
-         err = cpld_slot_led_init(slot);
-         if (err) {
-            cpld_leds_unregister(cpld, i);
-            return err;
-         }
+      err = cpld_slot_led_init(slot);
+      if (err) {
+         cpld_leds_unregister(cpld, i);
+         return err;
       }
    }
 
-   cpld_write_byte(cpld, FAN_OK_CHNG_REG, 0x00);
-   cpld_write_byte(cpld, FAN_PRES_CHNG_REG, 0x00);
-   cpld_write_byte(cpld, FAN_ID_CHNG_REG, 0x00);
+   cpld_write_byte(cpld, cpld->info->ok_chng_reg, 0x00);
+   cpld_write_byte(cpld, cpld->info->pres_chng_reg, 0x00);
+   cpld_write_byte(cpld, cpld->info->id_chng_reg, 0x00);
 
    if (managed_leds) {
       err = cpld_update_leds(cpld);
@@ -1146,6 +1253,7 @@ static int cpld_probe(struct i2c_client *client
 static const struct i2c_device_id cpld_id[] = {
    { "pali2_cpld", PALI2_CPLD },
    { "minke_cpld", MINKE_CPLD },
+   { "rundle_cpld", RUNDLE_CPLD },
    {}
 };
 
