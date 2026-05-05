@@ -262,6 +262,7 @@ modules-core:
 - mlx4_ib
 - mlx5-vfio-pci
 - mlx5_core
+- mlx5_fwctl
 - mlx5_ib
 - mlx5_vdpa
 - mlxfw
@@ -394,6 +395,7 @@ modules-core:
 - pci-hyperv-intf
 - pcrypt
 - pds_core
+- pds_fwctl
 - pkcs8_key_parser
 - pktgen
 - pm80xx
@@ -467,6 +469,7 @@ modules-core:
 - ts_bm
 - ts_fsm
 - ts_kmp
+- tsm
 - ttm
 - tun
 - tunnel4
@@ -522,7 +525,6 @@ modules-core:
 - xfrm_interface
 - xfrm_ipcomp
 - xfs
-- xhci-pci-renesas
 - xor
 - xt_CHECKSUM
 - xt_MASQUERADE
@@ -539,6 +541,7 @@ modules-core:
 /* modules-core: */
 #ifdef Arch_aarch64
 - aes-arm64
+- arm-cca-guest
 - aes-ce-blk
 - aes-ce-ccm
 - aes-ce-cipher
@@ -553,6 +556,7 @@ modules-core:
 - crct10dif-ce
 - ffa-core
 - ffa-module
+- fwctl
 - ghash-ce
 - poly1305-neon
 - sbsa_gwdt
@@ -639,7 +643,6 @@ modules-core:
 - md-cluster
 - mei-me
 - mii
-- mlx5_fwctl
 - mptbase
 - mptctl
 - mptsas
@@ -653,7 +656,6 @@ modules-core:
 - ovmapi
 - pcc-cpufreq
 - pcspkr
-- pds_fwctl
 - poly1305-x86_64
 - power
 - ptp_kvm
@@ -1700,6 +1702,7 @@ modules:
 - ipr
 - k3dma
 - ksz884x
+- lan743x
 - lan9303-core
 - lan9303_i2c
 - lan9303_mdio

@@ -42,6 +42,7 @@ enum sort_type {
 	/* common sort keys */
 	SORT_PID,
 	SORT_COMM,
+	SORT_COMM_IGNORE_DIGIT,
 	SORT_DSO,
 	SORT_SYM,
 	SORT_PARENT,
@@ -152,4 +153,5 @@ sort__dcacheline_cmp(struct hist_entry *left, struct hist_entry *right);
 int64_t
 _sort__sym_cmp(struct symbol *sym_l, struct symbol *sym_r);
 char *hist_entry__srcline(struct hist_entry *he);
+void exadata_override_default_sort_order(void);
 #endif	/* __PERF_SORT_H */
