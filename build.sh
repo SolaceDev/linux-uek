@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -eu
 
 # Configuration
 COMPILER_PATH=${COMPILER_PATH:-"/opt/gcc-7.3.0-x86_64/bin"}
