@@ -33,6 +33,30 @@ static struct _req_type __maybe_unused					\
 MBOX_UP_MCS_MESSAGES
 #undef M
 
+void rvu_mcs_dsa_cfg(struct rvu *rvu, u8 rpm_id, u8 lmac_id, int len, bool ena)
+{
+	struct mcs *mcs;
+	u64 cfg;
+	u8 port;
+
+	/* MCS not supported */
+	if (!rvu->mcs_blk_cnt)
+		return;
+
+	mcs = mcs_get_pdata(0);
+	if (mcs->hw->mcs_devtype != CN20KA_MCS)
+		return;
+
+	port = (rpm_id * rvu->hw->lmac_per_cgx) + lmac_id;
+	cfg = mcs_reg_read(mcs, MCSX_PEX_RX_SLAVE_POST_MAC_DA_PARSE_SKIP(port));
+	if (ena)
+		cfg = (len & 0x1f) >> 1;
+	else
+		cfg = 0x0;
+
+	mcs_reg_write(mcs, MCSX_PEX_RX_SLAVE_POST_MAC_DA_PARSE_SKIP(port), cfg);
+}
+
 void rvu_mcs_ptp_cfg(struct rvu *rvu, u8 rpm_id, u8 lmac_id, bool ena)
 {
 	struct mcs *mcs;
@@ -47,8 +71,9 @@ void rvu_mcs_ptp_cfg(struct rvu *rvu, u8 rpm_id, u8 lmac_id, bool ena)
 	 * during packet parsing.
 	 */
 
+	mcs = mcs_get_pdata(0);
 	/* CNF10K-B */
-	if (rvu->mcs_blk_cnt > 1) {
+	if (mcs->hw->mcs_devtype == CNF10KB_MCS) {
 		mcs = mcs_get_pdata(rpm_id);
 		cfg = mcs_reg_read(mcs, MCSX_PEX_RX_SLAVE_PEX_CONFIGURATION);
 		if (ena)
@@ -59,7 +84,6 @@ void rvu_mcs_ptp_cfg(struct rvu *rvu, u8 rpm_id, u8 lmac_id, bool ena)
 		return;
 	}
 	/* CN10KB */
-	mcs = mcs_get_pdata(0);
 	port = (rpm_id * rvu->hw->lmac_per_cgx) + lmac_id;
 	cfg = mcs_reg_read(mcs, MCSX_PEX_RX_SLAVE_PORT_CFGX(port));
 	if (ena)
@@ -97,7 +121,7 @@ int mcs_add_intr_wq_entry(struct mcs *mcs, struct mcs_intr_event *event)
 	if (pcifunc & RVU_PFVF_FUNC_MASK)
 		pfvf = &mcs->vf[rvu_get_hwvf(rvu, pcifunc)];
 	else
-		pfvf = &mcs->pf[rvu_get_pf(pcifunc)];
+		pfvf = &mcs->pf[rvu_get_pf(rvu->pdev, pcifunc)];
 
 	event->intr_mask &= pfvf->intr_mask;
 
@@ -123,7 +147,7 @@ static int mcs_notify_pfvf(struct mcs_intr_event *event, struct rvu *rvu)
 	struct mcs_intr_info *req;
 	int pf;
 
-	pf = rvu_get_pf(event->pcifunc);
+	pf = rvu_get_pf(rvu->pdev, event->pcifunc);
 
 	mutex_lock(&rvu->mbox_lock);
 
@@ -142,6 +166,8 @@ static int mcs_notify_pfvf(struct mcs_intr_event *event, struct rvu *rvu)
 	otx2_mbox_wait_for_zero(&rvu->afpf_wq_info.mbox_up, pf);
 
 	otx2_mbox_msg_send_up(&rvu->afpf_wq_info.mbox_up, pf);
+
+	otx2_mbox_wait_for_rsp(&rvu->afpf_wq_info.mbox_up, pf);
 
 	mutex_unlock(&rvu->mbox_lock);
 
@@ -191,7 +217,7 @@ int rvu_mbox_handler_mcs_intr_cfg(struct rvu *rvu,
 	if (pcifunc & RVU_PFVF_FUNC_MASK)
 		pfvf = &mcs->vf[rvu_get_hwvf(rvu, pcifunc)];
 	else
-		pfvf = &mcs->pf[rvu_get_pf(pcifunc)];
+		pfvf = &mcs->pf[rvu_get_pf(rvu->pdev, pcifunc)];
 
 	mcs->pf_map[0] = pcifunc;
 	pfvf->intr_mask = req->intr_mask;
@@ -270,7 +296,7 @@ int rvu_mbox_handler_mcs_get_flowid_stats(struct rvu *rvu,
 	 * MCSX_MIL_GLOBAL.FORCE_CLK_EN_IP needs to be set
 	 * to get accurate statistics
 	 */
-	if (mcs->hw->mcs_blks > 1)
+	if (mcs->hw->mcs_devtype == CNF10KB_MCS)
 		mcs_set_force_clk_en(mcs, true);
 
 	mutex_lock(&mcs->stats_lock);
@@ -280,7 +306,7 @@ int rvu_mbox_handler_mcs_get_flowid_stats(struct rvu *rvu,
 	/* Clear MCSX_MIL_GLOBAL.FORCE_CLK_EN_IP after reading
 	 * the statistics
 	 */
-	if (mcs->hw->mcs_blks > 1)
+	if (mcs->hw->mcs_devtype == CNF10KB_MCS)
 		mcs_set_force_clk_en(mcs, false);
 
 	return 0;
@@ -296,7 +322,7 @@ int rvu_mbox_handler_mcs_get_secy_stats(struct rvu *rvu,
 
 	mcs = mcs_get_pdata(req->mcs_id);
 
-	if (mcs->hw->mcs_blks > 1)
+	if (mcs->hw->mcs_devtype == CNF10KB_MCS)
 		mcs_set_force_clk_en(mcs, true);
 
 	mutex_lock(&mcs->stats_lock);
@@ -308,7 +334,7 @@ int rvu_mbox_handler_mcs_get_secy_stats(struct rvu *rvu,
 
 	mutex_unlock(&mcs->stats_lock);
 
-	if (mcs->hw->mcs_blks > 1)
+	if (mcs->hw->mcs_devtype == CNF10KB_MCS)
 		mcs_set_force_clk_en(mcs, false);
 
 	return 0;
@@ -325,38 +351,14 @@ int rvu_mbox_handler_mcs_get_sc_stats(struct rvu *rvu,
 
 	mcs = mcs_get_pdata(req->mcs_id);
 
-	if (mcs->hw->mcs_blks > 1)
+	if (mcs->hw->mcs_devtype == CNF10KB_MCS)
 		mcs_set_force_clk_en(mcs, true);
 
 	mutex_lock(&mcs->stats_lock);
 	mcs_get_sc_stats(mcs, rsp, req->id, req->dir);
 	mutex_unlock(&mcs->stats_lock);
 
-	if (mcs->hw->mcs_blks > 1)
-		mcs_set_force_clk_en(mcs, false);
-
-	return 0;
-}
-
-int rvu_mbox_handler_mcs_get_sa_stats(struct rvu *rvu,
-				      struct mcs_stats_req *req,
-				      struct mcs_sa_stats *rsp)
-{
-	struct mcs *mcs;
-
-	if (req->mcs_id >= rvu->mcs_blk_cnt)
-		return MCS_AF_ERR_INVALID_MCSID;
-
-	mcs = mcs_get_pdata(req->mcs_id);
-
-	if (mcs->hw->mcs_blks > 1)
-		mcs_set_force_clk_en(mcs, true);
-
-	mutex_lock(&mcs->stats_lock);
-	mcs_get_sa_stats(mcs, rsp, req->id, req->dir);
-	mutex_unlock(&mcs->stats_lock);
-
-	if (mcs->hw->mcs_blks > 1)
+	if (mcs->hw->mcs_devtype == CNF10KB_MCS)
 		mcs_set_force_clk_en(mcs, false);
 
 	return 0;
@@ -373,14 +375,14 @@ int rvu_mbox_handler_mcs_get_port_stats(struct rvu *rvu,
 
 	mcs = mcs_get_pdata(req->mcs_id);
 
-	if (mcs->hw->mcs_blks > 1)
+	if (mcs->hw->mcs_devtype == CNF10KB_MCS)
 		mcs_set_force_clk_en(mcs, true);
 
 	mutex_lock(&mcs->stats_lock);
 	mcs_get_port_stats(mcs, rsp, req->id, req->dir);
 	mutex_unlock(&mcs->stats_lock);
 
-	if (mcs->hw->mcs_blks > 1)
+	if (mcs->hw->mcs_devtype == CNF10KB_MCS)
 		mcs_set_force_clk_en(mcs, false);
 
 	return 0;
@@ -460,16 +462,8 @@ int rvu_mcs_flr_handler(struct rvu *rvu, u16 pcifunc)
 	struct mcs *mcs;
 	int mcs_id;
 
-	/* CNF10K-B mcs0-6 are mapped to RPM2-8*/
-	if (rvu->mcs_blk_cnt > 1) {
-		for (mcs_id = 0; mcs_id < rvu->mcs_blk_cnt; mcs_id++) {
-			mcs = mcs_get_pdata(mcs_id);
-			mcs_free_all_rsrc(mcs, MCS_RX, pcifunc);
-			mcs_free_all_rsrc(mcs, MCS_TX, pcifunc);
-		}
-	} else {
-		/* CN10K-B has only one mcs block */
-		mcs = mcs_get_pdata(0);
+	for (mcs_id = 0; mcs_id < rvu->mcs_blk_cnt; mcs_id++) {
+		mcs = mcs_get_pdata(mcs_id);
 		mcs_free_all_rsrc(mcs, MCS_RX, pcifunc);
 		mcs_free_all_rsrc(mcs, MCS_TX, pcifunc);
 	}
@@ -545,6 +539,9 @@ int rvu_mbox_handler_mcs_tx_sc_sa_map_write(struct rvu *rvu,
 
 	mcs = mcs_get_pdata(req->mcs_id);
 	mcs->mcs_ops->mcs_tx_sa_mem_map_write(mcs, req);
+
+	if (is_cn20k(mcs->pdev))
+		return 0;
 	mcs->tx_sa_active[req->sc_id] = req->tx_sa_active;
 
 	return 0;
@@ -630,8 +627,8 @@ int rvu_mbox_handler_mcs_free_resources(struct rvu *rvu,
 {
 	u16 pcifunc = req->hdr.pcifunc;
 	struct mcs_rsrc_map *map;
+	int rc = -EINVAL;
 	struct mcs *mcs;
-	int rc = 0;
 
 	if (req->mcs_id >= rvu->mcs_blk_cnt)
 		return MCS_AF_ERR_INVALID_MCSID;
@@ -680,8 +677,8 @@ int rvu_mbox_handler_mcs_alloc_resources(struct rvu *rvu,
 {
 	u16 pcifunc = req->hdr.pcifunc;
 	struct mcs_rsrc_map *map;
+	int rsrc_id = -EINVAL, i;
 	struct mcs *mcs;
-	int rsrc_id, i;
 
 	if (req->mcs_id >= rvu->mcs_blk_cnt)
 		return MCS_AF_ERR_INVALID_MCSID;
@@ -742,6 +739,8 @@ int rvu_mbox_handler_mcs_alloc_resources(struct rvu *rvu,
 			rsp->rsrc_cnt++;
 		}
 		break;
+	default:
+		goto exit;
 	}
 
 	rsp->rsrc_type = req->rsrc_type;
@@ -770,6 +769,9 @@ int rvu_mbox_handler_mcs_alloc_ctrl_pkt_rule(struct rvu *rvu,
 		return MCS_AF_ERR_INVALID_MCSID;
 
 	mcs = mcs_get_pdata(req->mcs_id);
+
+	if (is_cn20k(mcs->pdev))
+		return 0;
 
 	map = (req->dir == MCS_RX) ? &mcs->rx : &mcs->tx;
 
@@ -854,7 +856,7 @@ int rvu_mbox_handler_mcs_ctrl_pkt_rule_write(struct rvu *rvu,
 static void rvu_mcs_set_lmac_bmap(struct rvu *rvu)
 {
 	struct mcs *mcs = mcs_get_pdata(0);
-	unsigned long lmac_bmap;
+	unsigned long lmac_bmap = 0;
 	int cgx, lmac, port;
 
 	for (port = 0; port < mcs->hw->lmac_cnt; port++) {
@@ -865,6 +867,61 @@ static void rvu_mcs_set_lmac_bmap(struct rvu *rvu)
 		set_bit(port, &lmac_bmap);
 	}
 	mcs->hw->lmac_bmap = lmac_bmap;
+}
+
+static void rvu_cn20k_mcs_set_channel(struct rvu *rvu, u16 base)
+{
+	int mcs_id, lmac;
+	struct mcs *mcs;
+	u64 cfg;
+
+	for (mcs_id = 0; mcs_id < rvu->mcs_blk_cnt; mcs_id++) {
+		mcs = mcs_get_pdata(mcs_id);
+		if (!mcs)
+			continue;
+		for (lmac = 0; lmac < mcs->hw->lmac_cnt; lmac++) {
+			cfg = mcs_reg_read(mcs, MCSX_LINK_LMACX_CFG(lmac));
+			cfg &= ~(MCSX_LINK_LMAC_BASE_MASK | MCSX_LINK_LMAC_RANGE_MASK);
+			cfg |=	FIELD_PREP(MCSX_LINK_LMAC_RANGE_MASK, ilog2(16));
+			cfg |=	FIELD_PREP(MCSX_LINK_LMAC_BASE_MASK, base);
+			mcs_reg_write(mcs, MCSX_LINK_LMACX_CFG(lmac), cfg);
+			base += 16;
+		}
+	}
+}
+
+static void rvu_cn20ka_mcs_set_lmac_cnt(struct rvu *rvu)
+{
+	/* Set LMAC channel mapping for CN20KA MCS blocks */
+	rvu_cn20k_mcs_set_channel(rvu, rvu->hw->cgx_chan_base);
+
+	/* Populate LMAC bitmap based on MCS block setup */
+	rvu_mcs_set_lmac_bmap(rvu);
+	/* TODO: If RPM2 uses x2p2 config mcs1 */
+}
+
+#define CNF20KA_MCS_ID_WITH_SINGLE_LMAC 4
+#define CNF20KA_LMAC_COUNT 2
+
+static void rvu_cnf20ka_mcs_set_lmac_cnt(struct rvu *rvu)
+{
+	struct hwinfo *hw;
+	struct mcs *mcs;
+	u16 chan_base;
+	int mcs_id;
+
+	for (mcs_id = 0; mcs_id < rvu->mcs_blk_cnt; mcs_id++) {
+		mcs = mcs_get_pdata(mcs_id);
+		if (!mcs)
+			continue;
+		hw = mcs->hw;
+		hw->lmac_cnt = CNF20KA_LMAC_COUNT;
+		if (mcs_id == CNF20KA_MCS_ID_WITH_SINGLE_LMAC)
+			hw->lmac_cnt = 1;
+		hw->lmac_bmap = GENMASK_ULL(hw->lmac_cnt - 1, 0);
+	}
+	chan_base = rvu->hw->cgx_chan_base + (16 * 4);
+	rvu_cn20k_mcs_set_channel(rvu, chan_base);
 }
 
 int rvu_mcs_init(struct rvu *rvu)
@@ -878,14 +935,24 @@ int rvu_mcs_init(struct rvu *rvu)
 	if (!rvu->mcs_blk_cnt)
 		return 0;
 
+	mcs = mcs_get_pdata(0);
+
 	/* Needed only for CN10K-B */
-	if (rvu->mcs_blk_cnt == 1) {
+	if (mcs->hw->mcs_devtype == CN10KB_MCS) {
 		err = mcs_set_lmac_channels(0, hw->cgx_chan_base);
 		if (err)
 			return err;
 		/* Set active lmacs */
 		rvu_mcs_set_lmac_bmap(rvu);
 	}
+	if (mcs->hw->mcs_devtype == CN20KA_MCS)
+		rvu_cn20ka_mcs_set_lmac_cnt(rvu);
+
+	if (mcs->hw->mcs_devtype == CNF20KA_MCS)
+		rvu_cnf20ka_mcs_set_lmac_cnt(rvu);
+
+	if (mcs->hw->mcs_devtype == CN20KA_MCS || mcs->hw->mcs_devtype == CNF20KA_MCS)
+		cn20k_mcs_assign_ids(mcs);
 
 	/* Install default tcam bypass entry and set port to operational mode */
 	for (mcs_id = 0; mcs_id < rvu->mcs_blk_cnt; mcs_id++) {
@@ -925,7 +992,6 @@ void rvu_mcs_exit(struct rvu *rvu)
 	if (!rvu->mcs_intr_wq)
 		return;
 
-	flush_workqueue(rvu->mcs_intr_wq);
 	destroy_workqueue(rvu->mcs_intr_wq);
 	rvu->mcs_intr_wq = NULL;
 }

@@ -9,6 +9,7 @@
 #include "rvu.h"
 #include "cgx.h"
 #include "rvu_reg.h"
+#include "cn20k/api.h"
 
 /* RVU LMTST */
 #define LMT_TBL_OP_READ		0
@@ -66,7 +67,7 @@ static int lmtst_map_table_ops(struct rvu *rvu, u32 index, u64 *val,
 #define LMT_MAP_TBL_W1_OFF  8
 static u32 rvu_get_lmtst_tbl_index(struct rvu *rvu, u16 pcifunc)
 {
-	return ((rvu_get_pf(pcifunc) * LMT_MAX_VFS) +
+	return ((rvu_get_pf(rvu->pdev, pcifunc) * LMT_MAX_VFS) +
 		(pcifunc & RVU_PFVF_FUNC_MASK)) * LMT_MAPTBL_ENTRY_SIZE;
 }
 
@@ -83,9 +84,13 @@ static int rvu_get_lmtaddr(struct rvu *rvu, u16 pcifunc,
 
 	mutex_lock(&rvu->rsrc_lock);
 	rvu_write64(rvu, BLKADDR_RVUM, RVU_AF_SMMU_ADDR_REQ, iova);
-	pf = rvu_get_pf(pcifunc) & RVU_PFVF_PF_MASK;
-	val = BIT_ULL(63) | BIT_ULL(14) | BIT_ULL(13) | pf << 8 |
-	      ((pcifunc & RVU_PFVF_FUNC_MASK) & 0xFF);
+	pf = rvu_get_pf(rvu->pdev, pcifunc) & RVU_OTX2_PFVF_PF_MASK;
+	val = pf << 8 | ((pcifunc & RVU_PFVF_FUNC_MASK) & 0xFF);
+
+	if (is_cn20k(rvu->pdev))
+		val |= BIT_ULL(63) | BIT_ULL(23) | BIT_ULL(22);
+	else
+		val |= BIT_ULL(63) | BIT_ULL(14) | BIT_ULL(13);
 	rvu_write64(rvu, BLKADDR_RVUM, RVU_AF_SMMU_TXN_REQ, val);
 
 	err = rvu_poll_reg(rvu, BLKADDR_RVUM, RVU_AF_SMMU_ADDR_RSP_STS, BIT_ULL(0), false);
@@ -155,7 +160,7 @@ int rvu_mbox_handler_lmtst_tbl_setup(struct rvu *rvu,
 	int err = 0;
 	u64 val;
 
-	/* Check if PF_FUNC wants to use it's own local memory as LMTLINE
+	/* Check if PF_FUNC wants to use its own local memory as LMTLINE
 	 * region, if so, convert that IOVA to physical address and
 	 * populate LMT table with that address
 	 */
@@ -300,6 +305,9 @@ int rvu_set_channels_base(struct rvu *rvu)
 	struct rvu_hwinfo *hw = rvu->hw;
 	u64 nix_const, nix_const1;
 	int blkaddr;
+
+	if (is_cn20k(rvu->pdev))
+		return rvu_cn20k_set_channels_base(rvu);
 
 	blkaddr = rvu_get_blkaddr(rvu, BLKTYPE_NIX, 0);
 	if (blkaddr < 0)
@@ -448,13 +456,30 @@ err_put:
 	pci_dev_put(pdev);
 }
 
+int cplt_lmac_cnt(struct rvu *rvu, int node)
+{
+	unsigned long lmac_bmap;
+	int set_bits, rpm;
+
+	for (rpm = 0; rpm < rvu->fwdata->num_rpm_in_chiplet; rpm++) {
+		lmac_bmap = rvu->fwdata->csr_rpmx_cmr_num_lmacs[node][rpm];
+		set_bits += hweight64(lmac_bmap);
+	}
+
+	return set_bits;
+}
+
 static void __rvu_nix_set_channels(struct rvu *rvu, int blkaddr)
 {
 	u64 nix_const1 = rvu_read64(rvu, blkaddr, NIX_AF_CONST1);
 	u64 nix_const = rvu_read64(rvu, blkaddr, NIX_AF_CONST);
 	u16 cgx_chans, lbk_chans, sdp_chans, cpt_chans;
+	u8 cgx_lmac_map, cplt_cgx_base = 1;
 	struct rvu_hwinfo *hw = rvu->hw;
+	int node, lmac = 0, size;
+	unsigned long lmac_bmap;
 	int link, nix_link = 0;
+	bool found = 0;
 	u16 start;
 	u64 cfg;
 
@@ -463,13 +488,76 @@ static void __rvu_nix_set_channels(struct rvu *rvu, int blkaddr)
 	sdp_chans = nix_const1 & 0xFFFULL;
 	cpt_chans = (nix_const >> 32) & 0xFFFULL;
 
+	/* NIX links */
+	size = (((nix_const >> 48) & 0xFFULL) * sizeof(u16));
+	rvu->link2cgxchan_map = devm_kzalloc(rvu->dev, size, GFP_KERNEL);
+	if (!rvu->link2cgxchan_map)
+		return;
+
+	/* Reverse map table */
+	rvu->cgxchan2link_map =
+		devm_kzalloc(rvu->dev,
+			     NODE_MAX * rvu->cgx_cnt_max * 10 * sizeof(u16),
+			     GFP_KERNEL);
+	if (ZERO_OR_NULL_PTR(rvu->cgxchan2link_map))
+		return;
+
 	start = hw->cgx_chan_base;
 	for (link = 0; link < hw->cgx_links; link++, nix_link++) {
 		cfg = rvu_read64(rvu, blkaddr, NIX_AF_LINKX_CFG(nix_link));
 		cfg &= ~(NIX_AF_LINKX_BASE_MASK | NIX_AF_LINKX_RANGE_MASK);
 		cfg |=	FIELD_PREP(NIX_AF_LINKX_RANGE_MASK, ilog2(cgx_chans));
+		if (is_cnf20ka(rvu->pdev) && rvu->fwdata &&
+		    (link >= 4 && link < hw->cplt_links + 4)) {
+			found = 0;
+			for ( ; lmac < 4 && !found; lmac++) {
+				lmac_bmap = get_active_cplt_lmac(rvu,
+								 cplt_cgx_base,
+								 NULL, &node);
+				for_each_set_bit_wrap(lmac, &lmac_bmap,
+						      rvu->hw->lmac_per_cgx,
+						      lmac) {
+					cgx_lmac_map =
+						cgxlmac_id_to_bmap(cplt_cgx_base,
+								   lmac);
+					found = 1;
+					break;
+				}
+				if (lmac >= 3) {
+					lmac = -1;
+					cplt_cgx_base++;
+				}
+			}
+			cfg |=	FIELD_PREP(GENMASK_ULL(21, 20), 2);
+			cfg |=	FIELD_PREP(GENMASK_ULL(26, 25), 2);
+			/* For cnf20k, NIX LINKS are mapped to XCB0/1 LMACs in
+			 * case of 1st chiplet, for 2nd chiplet XCB2/3 are
+			 * used.
+			 * Single chiplet case:
+			 *  XCB0_LMAC0--> XCB0_LMAC11 mapped to 4-15 NIX links.
+			 * Two chiplet case:
+			 *  XCB0_LMAC0--> XCB0_LMAC7 mapped to 4-11 NIX links.
+			 *  XCB2_LMAC0--> XCB2_LMAC7 mapped to 12-19 NIX links.
+			 */
+			if (!rvu->fwdata->csr_rpmx_cmr_num_lmacs[2][0] ||
+			    (link < cplt_lmac_cnt(rvu, 1) + 4)) {
+				cfg |=	FIELD_PREP(GENMASK_ULL(31, 30), 0);
+				cfg |=	FIELD_PREP(GENMASK_ULL(35, 32),
+						   link - 4);
+				if (link >= cplt_lmac_cnt(rvu, 1) + 4)
+					break;
+			} else {
+				cfg |=	FIELD_PREP(GENMASK_ULL(31, 30), 2);
+				cfg |=	FIELD_PREP(GENMASK_ULL(35, 32),
+						   link %
+						   (cplt_lmac_cnt(rvu, 2) + 4));
+			}
+		}
 		cfg |=	FIELD_PREP(NIX_AF_LINKX_BASE_MASK, start);
 		rvu_write64(rvu, blkaddr, NIX_AF_LINKX_CFG(nix_link), cfg);
+		rvu->link2cgxchan_map[link] = cgx_lmac_map;
+		rvu->cgxchan2link_map[cgx_lmac_map] = link;
+
 		start += cgx_chans;
 	}
 
@@ -538,6 +626,8 @@ static void rvu_rpm_set_channels(struct rvu *rvu)
 
 	for (cgx = 0; cgx < rvu->cgx_cnt_max; cgx++) {
 		for (lmac = 0; lmac < hw->lmac_per_cgx; lmac++) {
+			if (is_cnf20ka(rvu->pdev) && cgx)
+				continue;
 			__rvu_rpm_set_channels(cgx, lmac, base);
 			base += 16;
 		}
@@ -552,14 +642,19 @@ void rvu_program_channels(struct rvu *rvu)
 		return;
 
 	rvu_nix_set_channels(rvu);
-	rvu_lbk_set_channels(rvu);
 	rvu_rpm_set_channels(rvu);
+	if (is_cn20k(rvu->pdev)) {
+		rvu_cn20k_cpt_chan_cfg(rvu);
+		rvu_cn20k_lbk_set_channels(rvu);
+		return;
+	}
+	rvu_lbk_set_channels(rvu);
 }
 
 void rvu_nix_block_cn10k_init(struct rvu *rvu, struct nix_hw *nix_hw)
 {
 	int blkaddr = nix_hw->blkaddr;
-	u64 cfg;
+	u64 cfg, val;
 
 	/* Set AF vWQE timer interval to a LF configurable range of
 	 * 6.4us to 1.632ms.
@@ -572,6 +667,18 @@ void rvu_nix_block_cn10k_init(struct rvu *rvu, struct nix_hw *nix_hw)
 	cfg = rvu_read64(rvu, blkaddr, NIX_AF_CFG);
 	cfg |= BIT_ULL(1) | BIT_ULL(2);
 	rvu_write64(rvu, blkaddr, NIX_AF_CFG, cfg);
+
+	/* Enable zero CPT aura in RQM if per-LF programmable
+	 * config doesn't exist. RQM method doesn't exist on A0.
+	 */
+	val = rvu_read64(rvu, blkaddr, NIX_AF_CONST);
+	if (!(val & BIT_ULL(62)) && is_cn10ka_a1(rvu)) {
+		cfg = rvu_read64(rvu, blkaddr, NIX_AF_RQM_ECO);
+		cfg |= BIT_ULL(63);
+		rvu_write64(rvu, blkaddr, NIX_AF_RQM_ECO, cfg);
+	}
+
+	nix_hw->rq_msk.total = NIX_RQ_MSK_PROFILES;
 }
 
 void rvu_apr_block_cn10k_init(struct rvu *rvu)
@@ -581,4 +688,14 @@ void rvu_apr_block_cn10k_init(struct rvu *rvu)
 	reg = rvu_read64(rvu, BLKADDR_APR, APR_AF_LMT_CFG);
 	reg |=	FIELD_PREP(LMTST_THROTTLE_MASK, LMTST_WR_PEND_MAX);
 	rvu_write64(rvu, BLKADDR_APR, APR_AF_LMT_CFG, reg);
+}
+
+void rvu_sso_block_cn10k_init(struct rvu *rvu, int blkaddr)
+{
+	u64 reg;
+
+	reg = rvu_read64(rvu, blkaddr, SSO_AF_WS_CFG);
+	/* Enable GET_WORK prefetching to the GWCs. */
+	reg &= ~BIT_ULL(4);
+	rvu_write64(rvu, blkaddr, SSO_AF_WS_CFG, reg);
 }

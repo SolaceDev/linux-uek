@@ -3,8 +3,8 @@
 # Build Broadcom HSDK drivers from the local in-tree bcm-hsdk-gpl
 # source tree.
 
-bcm_hsdk_root := $(srctree)/drivers/platform/bcm-hsdk-gpl/bcm-hsdk-gpl-6.5.32
-bcm_hsdk_rel := bcm-hsdk-gpl-6.5.32/
+bcm_hsdk_root := $(srctree)/drivers/platform/bcm-hsdk-gpl/hsdk-6.5.34-gpl
+bcm_hsdk_rel := hsdk-6.5.34-gpl/
 
 bcm_hsdk_genhdrs := generated/include/bcmcnet/bcmcnet_dep.h \
 	generated/include/bcmcnet/bcmcnet_buff.h
@@ -24,7 +24,7 @@ $(obj)/generated/include/bcmcnet/bcmcnet_buff.h: $(bcm_hsdk_root)/linux/knet/ngk
 ccflags-y += \
 	-UNGKNET_NETIF_MAX -DNGKNET_NETIF_MAX=1056 \
 	-UNGKNET_FILTER_MAX -DNGKNET_FILTER_MAX=1025 \
-	-DSAL_LINUX -DKPMD \
+	-DSAL_LINUX -DKPMD -DNGKNET_XDP_NATIVE \
 	-I$(obj)/generated/include \
 	-I$(bcm_hsdk_root)/shr/include \
 	-I$(bcm_hsdk_root)/sal/include \
@@ -98,7 +98,9 @@ linux_ngknet-y := $(bcm_hsdk_knet_chip_objs) \
 	$(bcm_hsdk_rel)linux/knet/ngknet_linux.o \
 	$(bcm_hsdk_rel)linux/knet/ngknet_main.o \
 	$(bcm_hsdk_rel)linux/knet/ngknet_procfs.o \
-	$(bcm_hsdk_rel)linux/knet/ngknet_ptp.o
+	$(bcm_hsdk_rel)linux/knet/ngknet_ptp.o \
+	$(bcm_hsdk_rel)linux/knet/ngknet_xsk.o \
+	$(bcm_hsdk_rel)linux/knet/ngknet_xdp.o
 
 obj-$(CONFIG_BCM_HSDK_KNETCB) += linux_ngknetcb.o
 linux_ngknetcb-y := $(bcm_hsdk_pmd_objs) \

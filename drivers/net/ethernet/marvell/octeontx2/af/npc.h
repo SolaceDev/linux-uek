@@ -8,6 +8,10 @@
 #ifndef NPC_H
 #define NPC_H
 
+#include "rvu_npc.h"
+#include "cn20k/npc.h"
+#include "cn20k/reg.h"
+
 #define NPC_KEX_CHAN_MASK	0xFFFULL
 
 #define SET_KEX_LD(intf, lid, ltype, ld, cfg)	\
@@ -41,6 +45,7 @@ enum npc_kpu_la_ltype {
 	NPC_LT_LA_CPT_HDR,
 	NPC_LT_LA_CUSTOM_L2_24B_ETHER,
 	NPC_LT_LA_CUSTOM_PRE_L2_ETHER,
+	NPC_LT_LA_FP_ETHER,
 	NPC_LT_LA_CUSTOM0 = 0xE,
 	NPC_LT_LA_CUSTOM1 = 0xF,
 };
@@ -114,6 +119,7 @@ enum npc_kpu_le_ltype {
 	NPC_LT_LE_TU_MPLS_IN_GRE,
 	NPC_LT_LE_TU_NSH_IN_GRE,
 	NPC_LT_LE_TU_MPLS_IN_UDP,
+	NPC_LT_LE_ROCEV2,
 	NPC_LT_LE_CUSTOM0 = 0xE,
 	NPC_LT_LE_CUSTOM1 = 0xF,
 };
@@ -177,6 +183,9 @@ enum npc_pkind_type {
 
 enum npc_interface_type {
 	NPC_INTF_MODE_DEF,
+	NPC_INTF_MODE_EDSA,
+	NPC_INTF_MODE_HIGIG,
+	NPC_INTF_MODE_FDSA,
 };
 
 /* list of known and supported fields in packet header and
@@ -210,7 +219,10 @@ enum key_fields {
 	NPC_DPORT_UDP,
 	NPC_SPORT_SCTP,
 	NPC_DPORT_SCTP,
+	NPC_GTPU_TEID,
+	NPC_GTPC_TEID,
 	NPC_IPSEC_SPI,
+	NPC_FDSA_VAL,
 	NPC_MPLS1_LBTCBOS,
 	NPC_MPLS1_TTL,
 	NPC_MPLS2_LBTCBOS,
@@ -265,6 +277,19 @@ struct npc_kpu_profile_cam {
 	u16 dp2_mask;
 } __packed;
 
+struct npc_kpu_profile_cam2 {
+	u8 state;
+	u8 state_mask;
+	u16 dp0;
+	u16 dp0_mask;
+	u16 dp1;
+	u16 dp1_mask;
+	u16 dp2;
+	u16 dp2_mask;
+	u8 ptype;
+	u8 ptype_mask;
+} __packed;
+
 struct npc_kpu_profile_action {
 	u8 errlev;
 	u8 errcode;
@@ -290,6 +315,7 @@ struct npc_kpu_profile {
 	int action_entries;
 	struct npc_kpu_profile_cam *cam;
 	struct npc_kpu_profile_action *action;
+	struct npc_kpu_profile_cam2 *cam2;
 };
 
 /* NPC KPU register formats */
@@ -429,6 +455,7 @@ struct nix_rx_action {
 
 /* NPC_AF_INTFX_KEX_CFG field masks */
 #define NPC_PARSE_NIBBLE		GENMASK_ULL(30, 0)
+#define NPC_TOTAL_NIBBLE		31
 
 /* NPC_PARSE_KEX_S nibble definitions for each field */
 #define NPC_PARSE_NIBBLE_CHAN		GENMASK_ULL(2, 0)
@@ -529,70 +556,7 @@ struct npc_kpu_fwdata {
 	 * struct npc_kpu_profile_cam[entries];
 	 * struct npc_kpu_profile_action[entries];
 	 */
-	u8	data[];
-} __packed;
-
-struct npc_lt_def {
-	u8	ltype_mask;
-	u8	ltype_match;
-	u8	lid;
-} __packed;
-
-struct npc_lt_def_ipsec {
-	u8	ltype_mask;
-	u8	ltype_match;
-	u8	lid;
-	u8	spi_offset;
-	u8	spi_nz;
-} __packed;
-
-struct npc_lt_def_apad {
-	u8	ltype_mask;
-	u8	ltype_match;
-	u8	lid;
-	u8	valid;
-} __packed;
-
-struct npc_lt_def_color {
-	u8	ltype_mask;
-	u8	ltype_match;
-	u8	lid;
-	u8	noffset;
-	u8	offset;
-} __packed;
-
-struct npc_lt_def_et {
-	u8	ltype_mask;
-	u8	ltype_match;
-	u8	lid;
-	u8	valid;
-	u8	offset;
-} __packed;
-
-struct npc_lt_def_cfg {
-	struct npc_lt_def	rx_ol2;
-	struct npc_lt_def	rx_oip4;
-	struct npc_lt_def	rx_iip4;
-	struct npc_lt_def	rx_oip6;
-	struct npc_lt_def	rx_iip6;
-	struct npc_lt_def	rx_otcp;
-	struct npc_lt_def	rx_itcp;
-	struct npc_lt_def	rx_oudp;
-	struct npc_lt_def	rx_iudp;
-	struct npc_lt_def	rx_osctp;
-	struct npc_lt_def	rx_isctp;
-	struct npc_lt_def_ipsec	rx_ipsec[2];
-	struct npc_lt_def	pck_ol2;
-	struct npc_lt_def	pck_oip4;
-	struct npc_lt_def	pck_oip6;
-	struct npc_lt_def	pck_iip4;
-	struct npc_lt_def_apad	rx_apad0;
-	struct npc_lt_def_apad	rx_apad1;
-	struct npc_lt_def_color	ovlan;
-	struct npc_lt_def_color	ivlan;
-	struct npc_lt_def_color	rx_gen0_color;
-	struct npc_lt_def_color	rx_gen1_color;
-	struct npc_lt_def_et	rx_et[2];
+	u8	data[0];
 } __packed;
 
 /* Loadable KPU profile firmware data */
@@ -619,7 +583,7 @@ struct npc_kpu_profile_fwdata {
 	 *  Custom KPU CAM and ACTION configuration entries.
 	 * struct npc_kpu_fwdata kpu[kpus];
 	 */
-	u8	data[];
+	u8	data[0];
 } __packed;
 
 struct rvu_npc_mcam_rule {
@@ -643,6 +607,7 @@ struct rvu_npc_mcam_rule {
 	u16 chan;
 	u16 chan_mask;
 	u8 lxmb;
+	u8 hw_prio;
 };
 
 #endif /* NPC_H */

@@ -125,6 +125,10 @@ static void npc_program_mkex_hash_rx(struct rvu *rvu, int blkaddr,
 	struct npc_mcam_kex_hash *mkex_hash = rvu->kpu.mkex_hash;
 	int lid, lt, ld, hash_cnt = 0;
 
+	/* TODO: Skip hash feature for cn20k */
+	if (is_cn20k(rvu->pdev))
+		return;
+
 	if (is_npc_intf_tx(intf))
 		return;
 
@@ -164,6 +168,10 @@ static void npc_program_mkex_hash_tx(struct rvu *rvu, int blkaddr,
 {
 	struct npc_mcam_kex_hash *mkex_hash = rvu->kpu.mkex_hash;
 	int lid, lt, ld, hash_cnt = 0;
+
+	/* TODO: Skip hash feature for cn20k */
+	if (is_cn20k(rvu->pdev))
+		return;
 
 	if (is_npc_intf_rx(intf))
 		return;
@@ -224,6 +232,10 @@ void npc_program_mkex_hash(struct rvu *rvu, int blkaddr)
 	struct rvu_hwinfo *hw = rvu->hw;
 	u64 cfg;
 
+	/* TODO: Support hash feature for CN20K */
+	if (is_cn20k(rvu->pdev))
+		return;
+
 	/* Check if hardware supports hash extraction */
 	if (!hwcap->npc_hash_extract)
 		return;
@@ -273,7 +285,7 @@ void npc_program_mkex_hash(struct rvu *rvu, int blkaddr)
 }
 
 void npc_update_field_hash(struct rvu *rvu, u8 intf,
-			   struct mcam_entry *entry,
+			   struct mcam_entry_mdata *mdata,
 			   int blkaddr,
 			   u64 features,
 			   struct flow_msg *pkt,
@@ -287,6 +299,10 @@ void npc_update_field_hash(struct rvu *rvu, u8 intf,
 	u64 ldata[2], cfg;
 	u32 field_hash;
 	u8 hash_idx;
+
+	/* TODO: Skip hash feature for cn20k */
+	if (is_cn20k(rvu->pdev))
+		return;
 
 	if (!rvu->hw->cap.npc_hash_extract) {
 		dev_dbg(rvu->dev, "%s: Field hash extract feature is not supported\n", __func__);
@@ -323,7 +339,7 @@ void npc_update_field_hash(struct rvu *rvu, u8 intf,
 										 rsp,
 										 intf,
 										 hash_idx);
-						npc_update_entry(rvu, NPC_SIP_IPV6, entry,
+						npc_update_entry(rvu, NPC_SIP_IPV6, mdata,
 								 field_hash, 0,
 								 GENMASK(31, 0), 0, intf);
 						memcpy(&opkt->ip6src, &pkt->ip6src,
@@ -340,7 +356,7 @@ void npc_update_field_hash(struct rvu *rvu, u8 intf,
 										 rsp,
 										 intf,
 										 hash_idx);
-						npc_update_entry(rvu, NPC_DIP_IPV6, entry,
+						npc_update_entry(rvu, NPC_DIP_IPV6, mdata,
 								 field_hash, 0,
 								 GENMASK(31, 0), 0, intf);
 						memcpy(&opkt->ip6dst, &pkt->ip6dst,
@@ -1465,7 +1481,7 @@ static int rvu_npc_exact_update_table_entry(struct rvu *rvu, u8 cgx_id, u8 lmac_
 int rvu_npc_exact_promisc_disable(struct rvu *rvu, u16 pcifunc)
 {
 	struct npc_exact_table *table;
-	int pf = rvu_get_pf(pcifunc);
+	int pf = rvu_get_pf(rvu->pdev, pcifunc);
 	u8 cgx_id, lmac_id;
 	u32 drop_mcam_idx;
 	bool *promisc;
@@ -1512,7 +1528,7 @@ int rvu_npc_exact_promisc_disable(struct rvu *rvu, u16 pcifunc)
 int rvu_npc_exact_promisc_enable(struct rvu *rvu, u16 pcifunc)
 {
 	struct npc_exact_table *table;
-	int pf = rvu_get_pf(pcifunc);
+	int pf = rvu_get_pf(rvu->pdev, pcifunc);
 	u8 cgx_id, lmac_id;
 	u32 drop_mcam_idx;
 	bool *promisc;
@@ -1560,7 +1576,7 @@ int rvu_npc_exact_promisc_enable(struct rvu *rvu, u16 pcifunc)
 int rvu_npc_exact_mac_addr_reset(struct rvu *rvu, struct cgx_mac_addr_reset_req *req,
 				 struct msg_rsp *rsp)
 {
-	int pf = rvu_get_pf(req->hdr.pcifunc);
+	int pf = rvu_get_pf(rvu->pdev, req->hdr.pcifunc);
 	u32 seq_id = req->index;
 	struct rvu_pfvf *pfvf;
 	u8 cgx_id, lmac_id;
@@ -1593,7 +1609,7 @@ int rvu_npc_exact_mac_addr_update(struct rvu *rvu,
 				  struct cgx_mac_addr_update_req *req,
 				  struct cgx_mac_addr_update_rsp *rsp)
 {
-	int pf = rvu_get_pf(req->hdr.pcifunc);
+	int pf = rvu_get_pf(rvu->pdev, req->hdr.pcifunc);
 	struct npc_exact_table_entry *entry;
 	struct npc_exact_table *table;
 	struct rvu_pfvf *pfvf;
@@ -1675,7 +1691,7 @@ int rvu_npc_exact_mac_addr_add(struct rvu *rvu,
 			       struct cgx_mac_addr_add_req *req,
 			       struct cgx_mac_addr_add_rsp *rsp)
 {
-	int pf = rvu_get_pf(req->hdr.pcifunc);
+	int pf = rvu_get_pf(rvu->pdev, req->hdr.pcifunc);
 	struct rvu_pfvf *pfvf;
 	u8 cgx_id, lmac_id;
 	int rc = 0;
@@ -1711,7 +1727,7 @@ int rvu_npc_exact_mac_addr_del(struct rvu *rvu,
 			       struct cgx_mac_addr_del_req *req,
 			       struct msg_rsp *rsp)
 {
-	int pf = rvu_get_pf(req->hdr.pcifunc);
+	int pf = rvu_get_pf(rvu->pdev, req->hdr.pcifunc);
 	int rc;
 
 	rc = rvu_npc_exact_del_table_entry_by_id(rvu, req->index);
@@ -1736,7 +1752,7 @@ int rvu_npc_exact_mac_addr_del(struct rvu *rvu,
 int rvu_npc_exact_mac_addr_set(struct rvu *rvu, struct cgx_mac_addr_set_or_get *req,
 			       struct cgx_mac_addr_set_or_get *rsp)
 {
-	int pf = rvu_get_pf(req->hdr.pcifunc);
+	int pf = rvu_get_pf(rvu->pdev, req->hdr.pcifunc);
 	u32 seq_id = req->index;
 	struct rvu_pfvf *pfvf;
 	u8 cgx_id, lmac_id;
@@ -1771,7 +1787,8 @@ int rvu_npc_exact_mac_addr_set(struct rvu *rvu, struct cgx_mac_addr_set_or_get *
 	/* find mcam entry if exist */
 	rc = nix_get_nixlf(rvu, req->hdr.pcifunc, &nixlf, NULL);
 	if (!rc) {
-		mcam_idx = npc_get_nixlf_mcam_index(&rvu->hw->mcam, req->hdr.pcifunc,
+		mcam_idx = npc_get_nixlf_mcam_index(rvu, &rvu->hw->mcam,
+						    req->hdr.pcifunc,
 						    nixlf, NIXLF_UCAST_ENTRY);
 	}
 
@@ -1873,6 +1890,10 @@ int rvu_npc_exact_init(struct rvu *rvu)
 	int err, i;
 	u64 cfg;
 	bool rc;
+
+	/* TODO: Skip exact match for cn20k */
+	if (is_cn20k(rvu->pdev))
+		return 0;
 
 	/* Read NPC_AF_CONST3 and check for have exact
 	 * match functionality is present
@@ -2001,7 +2022,7 @@ int rvu_npc_exact_init(struct rvu *rvu)
 		}
 
 		/* Filter rules are only for PF */
-		pcifunc = RVU_PFFUNC(i, 0);
+		pcifunc = RVU_PFFUNC(rvu->pdev, i, 0);
 
 		dev_dbg(rvu->dev,
 			"%s:Drop rule cgx=%d lmac=%d chan(val=0x%llx, mask=0x%llx\n",

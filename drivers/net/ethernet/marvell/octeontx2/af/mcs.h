@@ -125,10 +125,16 @@ struct hwinfo {
 	u8 sc_entries;
 	u16 sa_entries;
 	u8 mcs_x2p_intf;
+	u8 mcs_devtype;
 	u8 lmac_cnt;
 	u8 mcs_blks;
 	unsigned long	lmac_bmap; /* bitmap of enabled mcs lmac */
 	u16 ip_vec;
+};
+
+struct mcs_devlink {
+	struct devlink *dl;
+	struct mcs *mcs;
 };
 
 struct mcs {
@@ -149,12 +155,14 @@ struct mcs {
 	u16			num_vec;
 	void			*rvu;
 	u16			*tx_sa_active;
-	bool                      bypass;
+	bool			bypass;
+	struct mcs_devlink	*dl;
 };
 
 struct mcs_ops {
 	void	(*mcs_set_hw_capabilities)(struct mcs *mcs);
 	void	(*mcs_parser_cfg)(struct mcs *mcs);
+	void	(*mcs_set_external_bypass)(struct mcs *mcs, bool state);
 	void	(*mcs_tx_sa_mem_map_write)(struct mcs *mcs, struct mcs_tx_sc_sa_map *map);
 	void	(*mcs_rx_sa_mem_map_write)(struct mcs *mcs, struct mcs_rx_sc_sa_map *map);
 	void	(*mcs_flowid_secy_map)(struct mcs *mcs, struct secy_mem_map *map, int dir);
@@ -230,9 +238,16 @@ void cnf10kb_mcs_tx_pn_wrapped_handler(struct mcs *mcs);
 void cnf10kb_mcs_bbe_intr_handler(struct mcs *mcs, u64 intr, enum mcs_direction dir);
 void cnf10kb_mcs_pab_intr_handler(struct mcs *mcs, u64 intr, enum mcs_direction dir);
 
+/* CN20K APIs */
+struct mcs_ops *cn20ka_get_mac_ops(void);
+void cn20k_mcs_get_port_cfg(struct mcs *mcs, struct mcs_port_cfg_get_req *req,
+			    struct mcs_port_cfg_get_rsp *rsp);
+void cn20k_mcs_set_port_cfg(struct mcs *mcs, struct mcs_port_cfg_set_req *req);
+void cn20k_mcs_pn_threshold_set(struct mcs *mcs, struct mcs_set_pn_threshold *pn);
+void cn20k_mcs_assign_ids(struct mcs *mcs);
+
 /* Stats APIs */
 void mcs_get_sc_stats(struct mcs *mcs, struct mcs_sc_stats *stats, int id, int dir);
-void mcs_get_sa_stats(struct mcs *mcs, struct mcs_sa_stats *stats, int id, int dir);
 void mcs_get_port_stats(struct mcs *mcs, struct mcs_port_stats *stats, int id, int dir);
 void mcs_get_flowid_stats(struct mcs *mcs, struct mcs_flowid_stats *stats, int id, int dir);
 void mcs_get_rx_secy_stats(struct mcs *mcs, struct mcs_secy_stats *stats, int id);
@@ -243,4 +258,7 @@ int mcs_set_force_clk_en(struct mcs *mcs, bool set);
 
 int mcs_add_intr_wq_entry(struct mcs *mcs, struct mcs_intr_event *event);
 
+/* Devlink APIs */
+int mcs_register_dl(struct mcs *mcs);
+void mcs_unregister_dl(struct mcs *mcs);
 #endif /* MCS_H */

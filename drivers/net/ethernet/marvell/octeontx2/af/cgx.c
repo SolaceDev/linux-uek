@@ -22,6 +22,7 @@
 #include "lmac_common.h"
 
 #define DRV_NAME	"Marvell-CGX-RPM"
+#define DRV_STRING      "Marvell CGX/RPM Driver"
 
 #define CGX_RX_STAT_GLOBAL_INDEX	9
 
@@ -491,11 +492,18 @@ int cgx_lmac_addr_max_entries_get(u8 cgx_id, u8 lmac_id)
 u64 cgx_lmac_addr_get(u8 cgx_id, u8 lmac_id)
 {
 	struct cgx *cgx_dev = cgx_get_pdata(cgx_id);
-	struct lmac *lmac = lmac_pdata(lmac_id, cgx_dev);
 	struct mac_ops *mac_ops;
+	struct lmac *lmac;
 	int index;
 	u64 cfg;
 	int id;
+
+	if (!cgx_dev)
+		return 0;
+
+	lmac = lmac_pdata(lmac_id, cgx_dev);
+	if (!lmac)
+		return 0;
 
 	mac_ops = cgx_dev->mac_ops;
 
@@ -515,6 +523,18 @@ int cgx_set_pkind(void *cgxd, u8 lmac_id, int pkind)
 		return -ENODEV;
 
 	cgx_write(cgx, lmac_id, cgx->mac_ops->rxid_map_offset, (pkind & 0x3F));
+	return 0;
+}
+
+int cgx_get_pkind(void *cgxd, u8 lmac_id, int *pkind)
+{
+	struct cgx *cgx = cgxd;
+
+	if (!is_lmac_valid(cgx, lmac_id))
+		return -ENODEV;
+
+	*pkind = cgx_read(cgx, lmac_id, cgx->mac_ops->rxid_map_offset);
+	*pkind = *pkind & 0x3F;
 	return 0;
 }
 
@@ -635,26 +655,6 @@ void cgx_lmac_promisc_config(int cgx_id, int lmac_id, bool enable)
 	}
 }
 
-static int cgx_lmac_get_pause_frm_status(void *cgxd, int lmac_id,
-					 u8 *tx_pause, u8 *rx_pause)
-{
-	struct cgx *cgx = cgxd;
-	u64 cfg;
-
-	if (is_dev_rpm(cgx))
-		return 0;
-
-	if (!is_lmac_valid(cgx, lmac_id))
-		return -ENODEV;
-
-	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_RX_FRM_CTL);
-	*rx_pause = !!(cfg & CGX_SMUX_RX_FRM_CTL_CTL_BCK);
-
-	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_TX_CTL);
-	*tx_pause = !!(cfg & CGX_SMUX_TX_CTL_L2P_BP_CONV);
-	return 0;
-}
-
 /* Enable or disable forwarding received pause frames to Tx block */
 void cgx_lmac_enadis_rx_pause_fwding(void *cgxd, int lmac_id, bool enable)
 {
@@ -738,6 +738,16 @@ int cgx_get_tx_stats(void *cgxd, int lmac_id, int idx, u64 *tx_stat)
 u64 cgx_features_get(void *cgxd)
 {
 	return ((struct cgx *)cgxd)->hw_features;
+}
+
+u64 cgx_get_dmacflt_dropped_pktcnt(void *cgxd, int lmac_id)
+{
+	struct cgx *cgx = cgxd;
+
+	if (!is_lmac_valid(cgx, lmac_id))
+		return 0;
+
+	return cgx_read(cgx, lmac_id, CGXX_CMRX_RX_STAT4);
 }
 
 int cgx_stats_reset(void *cgxd, int lmac_id)
@@ -859,8 +869,82 @@ int cgx_lmac_tx_enable(void *cgxd, int lmac_id, bool enable)
 	return !!(last & DATA_PKT_TX_EN);
 }
 
-static int cgx_lmac_enadis_pause_frm(void *cgxd, int lmac_id,
-				     u8 tx_pause, u8 rx_pause)
+static int  cgx_lmac_get_higig2_pause_frm_status(void *cgxd, int lmac_id,
+						 u8 *tx_pause, u8 *rx_pause)
+{
+	struct cgx *cgx = cgxd;
+	u64 cfg;
+
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_HG2_CONTROL);
+
+	*rx_pause = !!(cfg & CGXX_SMUX_HG2_CONTROL_RX_ENABLE);
+	*tx_pause = !!(cfg & CGXX_SMUX_HG2_CONTROL_TX_ENABLE);
+	return 0;
+}
+
+int cgx_lmac_get_pause_frm_status(void *cgxd, int lmac_id,
+				  u8 *tx_pause, u8 *rx_pause)
+{
+	struct cgx *cgx = cgxd;
+	u64 cfg;
+
+	if (!is_lmac_valid(cgx, lmac_id))
+		return -ENODEV;
+
+	if (is_higig2_enabled(cgxd, lmac_id))
+		return cgx_lmac_get_higig2_pause_frm_status(cgxd, lmac_id,
+							    tx_pause, rx_pause);
+
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_RX_FRM_CTL);
+	*rx_pause = !!(cfg & CGX_SMUX_RX_FRM_CTL_CTL_BCK);
+
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_TX_CTL);
+	*tx_pause = !!(cfg & CGX_SMUX_TX_CTL_L2P_BP_CONV);
+	return 0;
+}
+
+static int cgx_lmac_enadis_higig2_pause_frm(void *cgxd, int lmac_id,
+					    u8 tx_pause, u8 rx_pause)
+{
+	struct cgx *cgx = cgxd;
+	u64 cfg;
+
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_HG2_CONTROL);
+	cfg &= ~CGXX_SMUX_HG2_CONTROL_RX_ENABLE;
+	cfg |= rx_pause ? CGXX_SMUX_HG2_CONTROL_RX_ENABLE : 0x0;
+	cgx_write(cgx, lmac_id, CGXX_SMUX_HG2_CONTROL, cfg);
+
+	/* Forward PAUSE information to TX block */
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_RX_FRM_CTL);
+	cfg &= ~CGX_SMUX_RX_FRM_CTL_CTL_BCK;
+	cfg |= rx_pause ? CGX_SMUX_RX_FRM_CTL_CTL_BCK : 0x0;
+	cgx_write(cgx, lmac_id, CGXX_SMUX_RX_FRM_CTL, cfg);
+
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_HG2_CONTROL);
+	cfg &= ~CGXX_SMUX_HG2_CONTROL_TX_ENABLE;
+	cfg |= tx_pause ? CGXX_SMUX_HG2_CONTROL_TX_ENABLE : 0x0;
+	cgx_write(cgx, lmac_id, CGXX_SMUX_HG2_CONTROL, cfg);
+
+	/* allow intra packet hg2 generation */
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_TX_PAUSE_PKT_INTERVAL);
+	cfg &= ~CGXX_SMUX_TX_PAUSE_PKT_HG2_INTRA_EN;
+	cfg |= tx_pause ? CGXX_SMUX_TX_PAUSE_PKT_HG2_INTRA_EN : 0x0;
+	cgx_write(cgx, lmac_id, CGXX_SMUX_TX_PAUSE_PKT_INTERVAL, cfg);
+
+	cfg = cgx_read(cgx, 0, CGXX_CMR_RX_OVR_BP);
+	if (tx_pause) {
+		cfg &= ~CGX_CMR_RX_OVR_BP_EN(lmac_id);
+	} else {
+		cfg |= CGX_CMR_RX_OVR_BP_EN(lmac_id);
+		cfg &= ~CGX_CMR_RX_OVR_BP_BP(lmac_id);
+	}
+	cgx_write(cgx, 0, CGXX_CMR_RX_OVR_BP, cfg);
+
+	return 0;
+}
+
+static int cgx_lmac_enadis_8023_pause_frm(void *cgxd, int lmac_id,
+					  u8 tx_pause, u8 rx_pause)
 {
 	struct cgx *cgx = cgxd;
 	u64 cfg;
@@ -897,57 +981,23 @@ static int cgx_lmac_enadis_pause_frm(void *cgxd, int lmac_id,
 	return 0;
 }
 
-static void cgx_lmac_pause_frm_config(void *cgxd, int lmac_id, bool enable)
+int cgx_lmac_enadis_pause_frm(void *cgxd, int lmac_id,
+			      u8 tx_pause, u8 rx_pause)
 {
 	struct cgx *cgx = cgxd;
-	u64 cfg;
 
 	if (!is_lmac_valid(cgx, lmac_id))
-		return;
+		return -ENODEV;
 
-	if (enable) {
-		/* Set pause time and interval */
-		cgx_write(cgx, lmac_id, CGXX_SMUX_TX_PAUSE_PKT_TIME,
-			  DEFAULT_PAUSE_TIME);
-		cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_TX_PAUSE_PKT_INTERVAL);
-		cfg &= ~0xFFFFULL;
-		cgx_write(cgx, lmac_id, CGXX_SMUX_TX_PAUSE_PKT_INTERVAL,
-			  cfg | (DEFAULT_PAUSE_TIME / 2));
-
-		cgx_write(cgx, lmac_id, CGXX_GMP_GMI_TX_PAUSE_PKT_TIME,
-			  DEFAULT_PAUSE_TIME);
-
-		cfg = cgx_read(cgx, lmac_id,
-			       CGXX_GMP_GMI_TX_PAUSE_PKT_INTERVAL);
-		cfg &= ~0xFFFFULL;
-		cgx_write(cgx, lmac_id, CGXX_GMP_GMI_TX_PAUSE_PKT_INTERVAL,
-			  cfg | (DEFAULT_PAUSE_TIME / 2));
-	}
-
-	/* ALL pause frames received are completely ignored */
-	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_RX_FRM_CTL);
-	cfg &= ~CGX_SMUX_RX_FRM_CTL_CTL_BCK;
-	cgx_write(cgx, lmac_id, CGXX_SMUX_RX_FRM_CTL, cfg);
-
-	cfg = cgx_read(cgx, lmac_id, CGXX_GMP_GMI_RXX_FRM_CTL);
-	cfg &= ~CGX_GMP_GMI_RXX_FRM_CTL_CTL_BCK;
-	cgx_write(cgx, lmac_id, CGXX_GMP_GMI_RXX_FRM_CTL, cfg);
-
-	/* Disable pause frames transmission */
-	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_TX_CTL);
-	cfg &= ~CGX_SMUX_TX_CTL_L2P_BP_CONV;
-	cgx_write(cgx, lmac_id, CGXX_SMUX_TX_CTL, cfg);
-
-	cfg = cgx_read(cgx, 0, CGXX_CMR_RX_OVR_BP);
-	cfg |= CGX_CMR_RX_OVR_BP_EN(lmac_id);
-	cfg &= ~CGX_CMR_RX_OVR_BP_BP(lmac_id);
-	cgx_write(cgx, 0, CGXX_CMR_RX_OVR_BP, cfg);
-
-	/* Disable all PFC classes by default */
-	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_CBFC_CTL);
-	cfg = FIELD_SET(CGX_PFC_CLASS_MASK, 0, cfg);
-	cgx_write(cgx, lmac_id, CGXX_SMUX_CBFC_CTL, cfg);
+	if (is_higig2_enabled(cgxd, lmac_id))
+		return	cgx_lmac_enadis_higig2_pause_frm(cgxd, lmac_id,
+						   tx_pause, rx_pause);
+	else
+		return  cgx_lmac_enadis_8023_pause_frm(cgxd, lmac_id,
+						   tx_pause, rx_pause);
+	return 0;
 }
+EXPORT_SYMBOL(cgx_lmac_enadis_pause_frm);
 
 int verify_lmac_fc_cfg(void *cgxd, int lmac_id, u8 tx_pause, u8 rx_pause,
 		       int pfvf_idx)
@@ -1074,6 +1124,73 @@ void cgx_lmac_ptp_config(void *cgxd, int lmac_id, bool enable)
 	}
 }
 
+void cgx_lmac_pause_frm_config(void *cgxd, int lmac_id, bool enable)
+{
+	struct cgx *cgx = cgxd;
+	u64 cfg;
+
+	if (!is_lmac_valid(cgx, lmac_id))
+		return;
+
+	if (enable) {
+		/* Set pause time and interval */
+		cgx_write(cgx, lmac_id, CGXX_SMUX_TX_PAUSE_PKT_TIME,
+			  DEFAULT_PAUSE_TIME);
+		/* Set pause interval as the hardware default is too short */
+		cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_TX_PAUSE_PKT_INTERVAL);
+		cfg &= ~0xFFFFULL;
+		cgx_write(cgx, lmac_id, CGXX_SMUX_TX_PAUSE_PKT_INTERVAL,
+			  cfg | (DEFAULT_PAUSE_TIME / 2));
+
+		cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_TX_PAUSE_PKT_INTERVAL);
+		cfg = FIELD_SET(HG2_INTRA_INTERVAL, (DEFAULT_PAUSE_TIME / 2),
+				cfg);
+		cgx_write(cgx, lmac_id, CGXX_SMUX_TX_PAUSE_PKT_INTERVAL,
+			  cfg);
+
+		cgx_write(cgx, lmac_id, CGXX_GMP_GMI_TX_PAUSE_PKT_TIME,
+			  DEFAULT_PAUSE_TIME);
+
+		cfg = cgx_read(cgx, lmac_id,
+			       CGXX_GMP_GMI_TX_PAUSE_PKT_INTERVAL);
+		cfg &= ~0xFFFFULL;
+		cgx_write(cgx, lmac_id, CGXX_GMP_GMI_TX_PAUSE_PKT_INTERVAL,
+			  cfg | (DEFAULT_PAUSE_TIME / 2));
+	}
+
+	/* ALL pause frames received are completely ignored */
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_RX_FRM_CTL);
+	cfg &= ~CGX_SMUX_RX_FRM_CTL_CTL_BCK;
+	cgx_write(cgx, lmac_id, CGXX_SMUX_RX_FRM_CTL, cfg);
+
+	cfg = cgx_read(cgx, lmac_id, CGXX_GMP_GMI_RXX_FRM_CTL);
+	cfg &= ~CGX_GMP_GMI_RXX_FRM_CTL_CTL_BCK;
+	cgx_write(cgx, lmac_id, CGXX_GMP_GMI_RXX_FRM_CTL, cfg);
+
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_HG2_CONTROL);
+	cfg &= ~CGXX_SMUX_HG2_CONTROL_RX_ENABLE;
+	cgx_write(cgx, lmac_id, CGXX_SMUX_HG2_CONTROL, cfg);
+
+	/* Disable pause frames transmission */
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_TX_CTL);
+	cfg &= ~CGX_SMUX_TX_CTL_L2P_BP_CONV;
+	cgx_write(cgx, lmac_id, CGXX_SMUX_TX_CTL, cfg);
+
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_HG2_CONTROL);
+	cfg &= ~CGXX_SMUX_HG2_CONTROL_TX_ENABLE;
+	cgx_write(cgx, lmac_id, CGXX_SMUX_HG2_CONTROL, cfg);
+
+	cfg = cgx_read(cgx, 0, CGXX_CMR_RX_OVR_BP);
+	cfg |= CGX_CMR_RX_OVR_BP_EN(lmac_id);
+	cfg &= ~CGX_CMR_RX_OVR_BP_BP(lmac_id);
+	cgx_write(cgx, 0, CGXX_CMR_RX_OVR_BP, cfg);
+
+	/* Disable all PFC classes by default */
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_CBFC_CTL);
+	cfg = FIELD_SET(CGX_PFC_CLASS_MASK, 0, cfg);
+	cgx_write(cgx, lmac_id, CGXX_SMUX_CBFC_CTL, cfg);
+}
+
 /* CGX Firmware interface low level support */
 int cgx_fwi_cmd_send(u64 req, u64 *resp, struct lmac *lmac)
 {
@@ -1181,17 +1298,25 @@ static int cgx_link_usertable_index_map(int speed)
 static void set_mod_args(struct cgx_set_link_mode_args *args,
 			 u32 speed, u8 duplex, u8 autoneg, u64 mode)
 {
-	/* Fill default values incase of user did not pass
-	 * valid parameters
+	int mode_baseidx;
+	u8 cgx_mode;
+
+	if (args->multimode) {
+		args->mode |= mode;
+		return;
+	}
+
+	/* Derive mode_base_idx and mode fields based
+	 * on cgx_mode value
 	 */
-	if (args->duplex == DUPLEX_UNKNOWN)
-		args->duplex = duplex;
-	if (args->speed == SPEED_UNKNOWN)
-		args->speed = speed;
-	if (args->an == AUTONEG_UNKNOWN)
-		args->an = autoneg;
+	cgx_mode = find_first_bit((unsigned long *)&mode,
+				  CGX_MODE_MAX);
 	args->mode = mode;
-	args->ports = 0;
+	mode_baseidx = cgx_mode - 41;
+	if (mode_baseidx >= 0) {
+		args->mode_baseidx = 1;
+		args->mode = BIT_ULL(mode_baseidx);
+	}
 }
 
 static void otx2_map_ethtool_link_modes(u64 bitmask,
@@ -1199,16 +1324,16 @@ static void otx2_map_ethtool_link_modes(u64 bitmask,
 {
 	switch (bitmask) {
 	case ETHTOOL_LINK_MODE_10baseT_Half_BIT:
-		set_mod_args(args, 10, 1, 1, BIT_ULL(CGX_MODE_SGMII));
+		set_mod_args(args, 10, 1, 1, BIT_ULL(CGX_MODE_SGMII_10M_BIT));
 		break;
 	case  ETHTOOL_LINK_MODE_10baseT_Full_BIT:
-		set_mod_args(args, 10, 0, 1, BIT_ULL(CGX_MODE_SGMII));
+		set_mod_args(args, 10, 0, 1, BIT_ULL(CGX_MODE_SGMII_10M_BIT));
 		break;
 	case  ETHTOOL_LINK_MODE_100baseT_Half_BIT:
-		set_mod_args(args, 100, 1, 1, BIT_ULL(CGX_MODE_SGMII));
+		set_mod_args(args, 100, 1, 1, BIT_ULL(CGX_MODE_SGMII_100M_BIT));
 		break;
 	case  ETHTOOL_LINK_MODE_100baseT_Full_BIT:
-		set_mod_args(args, 100, 0, 1, BIT_ULL(CGX_MODE_SGMII));
+		set_mod_args(args, 100, 0, 1, BIT_ULL(CGX_MODE_SGMII_100M_BIT));
 		break;
 	case  ETHTOOL_LINK_MODE_1000baseT_Half_BIT:
 		set_mod_args(args, 1000, 1, 1, BIT_ULL(CGX_MODE_SGMII));
@@ -1231,8 +1356,17 @@ static void otx2_map_ethtool_link_modes(u64 bitmask,
 	case  ETHTOOL_LINK_MODE_10000baseKR_Full_BIT:
 		set_mod_args(args, 10000, 0, 1, BIT_ULL(CGX_MODE_10G_KR));
 		break;
+	case  ETHTOOL_LINK_MODE_20000baseMLD2_Full_BIT:
+		set_mod_args(args, 20000, 0, 0, BIT_ULL(CGX_MODE_20G_C2C));
+		break;
 	case  ETHTOOL_LINK_MODE_25000baseSR_Full_BIT:
 		set_mod_args(args, 25000, 0, 0, BIT_ULL(CGX_MODE_25G_C2C));
+		break;
+	case  ETHTOOL_LINK_MODE_10000baseR_FEC_BIT:
+		set_mod_args(args, 25000, 0, 0, BIT_ULL(CGX_MODE_25G_C2M));
+		break;
+	case  ETHTOOL_LINK_MODE_20000baseKR2_Full_BIT:
+		set_mod_args(args, 25000, 0, 0, BIT_ULL(CGX_MODE_25G_2_C2C));
 		break;
 	case  ETHTOOL_LINK_MODE_25000baseCR_Full_BIT:
 		set_mod_args(args, 25000, 0, 1, BIT_ULL(CGX_MODE_25G_CR));
@@ -1252,17 +1386,26 @@ static void otx2_map_ethtool_link_modes(u64 bitmask,
 	case  ETHTOOL_LINK_MODE_40000baseKR4_Full_BIT:
 		set_mod_args(args, 40000, 0, 1, BIT_ULL(CGX_MODE_40G_KR4));
 		break;
-	case  ETHTOOL_LINK_MODE_50000baseSR_Full_BIT:
+	case  ETHTOOL_LINK_MODE_10000baseKX4_Full_BIT:
+		set_mod_args(args, 40000, 0, 0, BIT_ULL(CGX_MODE_40GAUI_C2C));
+		break;
+	case  ETHTOOL_LINK_MODE_50000baseSR2_Full_BIT:
 		set_mod_args(args, 50000, 0, 0, BIT_ULL(CGX_MODE_50G_C2C));
 		break;
-	case  ETHTOOL_LINK_MODE_50000baseLR_ER_FR_Full_BIT:
+	case  ETHTOOL_LINK_MODE_56000baseKR4_Full_BIT:
+		set_mod_args(args, 50000, 0, 0, BIT_ULL(CGX_MODE_50G_4_C2C));
+		break;
+	case  ETHTOOL_LINK_MODE_50000baseDR_Full_BIT:
 		set_mod_args(args, 50000, 0, 0, BIT_ULL(CGX_MODE_50G_C2M));
 		break;
-	case  ETHTOOL_LINK_MODE_50000baseCR_Full_BIT:
+	case  ETHTOOL_LINK_MODE_50000baseCR2_Full_BIT:
 		set_mod_args(args, 50000, 0, 1, BIT_ULL(CGX_MODE_50G_CR));
 		break;
-	case  ETHTOOL_LINK_MODE_50000baseKR_Full_BIT:
+	case  ETHTOOL_LINK_MODE_50000baseKR2_Full_BIT:
 		set_mod_args(args, 50000, 0, 1, BIT_ULL(CGX_MODE_50G_KR));
+		break;
+	case  ETHTOOL_LINK_MODE_10000baseLRM_Full_BIT:
+		set_mod_args(args, 80000, 0, 0, BIT_ULL(CGX_MODE_80GAUI_C2C));
 		break;
 	case  ETHTOOL_LINK_MODE_100000baseSR4_Full_BIT:
 		set_mod_args(args, 100000, 0, 0, BIT_ULL(CGX_MODE_100G_C2C));
@@ -1275,6 +1418,104 @@ static void otx2_map_ethtool_link_modes(u64 bitmask,
 		break;
 	case  ETHTOOL_LINK_MODE_100000baseKR4_Full_BIT:
 		set_mod_args(args, 100000, 0, 1, BIT_ULL(CGX_MODE_100G_KR4));
+		break;
+	case  ETHTOOL_LINK_MODE_50000baseSR_Full_BIT:
+		set_mod_args(args, 50000, 0, 0,
+			     BIT_ULL(CGX_MODE_LAUI_2_C2C_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_50000baseLR_ER_FR_Full_BIT:
+		set_mod_args(args, 50000, 0, 0,
+			     BIT_ULL(CGX_MODE_LAUI_2_C2M_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_50000baseCR_Full_BIT:
+		set_mod_args(args, 50000, 0, 1,
+			     BIT_ULL(CGX_MODE_50GBASE_CR2_C_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_50000baseKR_Full_BIT:
+		set_mod_args(args, 50000, 0, 1,
+			     BIT_ULL(CGX_MODE_50GBASE_KR2_C_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_100000baseSR2_Full_BIT:
+		set_mod_args(args, 100000, 0, 0,
+			     BIT_ULL(CGX_MODE_100GAUI_2_C2C_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_100000baseLR2_ER2_FR2_Full_BIT:
+		set_mod_args(args, 100000, 0, 0,
+			     BIT_ULL(CGX_MODE_100GAUI_2_C2M_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_100000baseCR2_Full_BIT:
+		set_mod_args(args, 100000, 0, 1,
+			     BIT_ULL(CGX_MODE_100GBASE_CR2_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_100000baseKR2_Full_BIT:
+		set_mod_args(args, 100000, 0, 1,
+			     BIT_ULL(CGX_MODE_100GBASE_KR2_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_1000baseKX_Full_BIT:
+		set_mod_args(args, 1000, 0, 0,
+			     BIT_ULL(CGX_MODE_SFI_1G_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_56000baseCR4_Full_BIT:
+		set_mod_args(args, 25000, 0, 1,
+			     BIT_ULL(CGX_MODE_25GBASE_CR_C_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_56000baseSR4_Full_BIT:
+		set_mod_args(args, 25000, 0, 1,
+			     BIT_ULL(CGX_MODE_25GBASE_KR_C_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_2500baseX_Full_BIT:
+		set_mod_args(args, 2500, 0, 1,
+			     BIT_ULL(ETH_MODE_2500_BASEX_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_5000baseT_Full_BIT:
+		set_mod_args(args, 5000, 0, 1,
+			     BIT_ULL(ETH_MODE_5000_BASEX_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_100baseT1_Full_BIT:
+		set_mod_args(args, 1000, 0, 1,
+			     BIT_ULL(ETH_MODE_O_USGMII_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_1000baseT1_Full_BIT:
+		set_mod_args(args, 1000, 0, 1,
+			     BIT_ULL(ETH_MODE_Q_USGMII_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_2500baseT_Full_BIT:
+		set_mod_args(args, 2500, 0, 1,
+			     BIT_ULL(ETH_MODE_2_5G_USXGMII_BIT));
+		break;
+	case ETHTOOL_LINK_MODE_200000baseCR4_Full_BIT:
+		set_mod_args(args, 5000, 0, 1,
+			     BIT_ULL(ETH_MODE_5G_USXGMII_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_10000baseCR_Full_BIT:
+		set_mod_args(args, 10000, 0, 1,
+			     BIT_ULL(ETH_MODE_10G_SXGMII_BIT));
+		break;
+	case  ETHTOOL_LINK_MODE_10000baseER_Full_BIT:
+		set_mod_args(args, 5000, 0, 1,
+			     BIT_ULL(ETH_MODE_10G_DXGMII_BIT));
+		break;
+	case ETHTOOL_LINK_MODE_200000baseDR4_Full_BIT:
+		set_mod_args(args, 2500, 0, 1,
+			     BIT_ULL(ETH_MODE_10G_QXGMII_BIT));
+		break;
+	case ETHTOOL_LINK_MODE_100000baseSR_Full_BIT:
+		set_mod_args(args, 100, 1, 1, BIT_ULL(ETH_MODE_100GAUI_1_C2C_BIT));
+		break;
+	case ETHTOOL_LINK_MODE_100000baseLR_ER_FR_Full_BIT:
+		set_mod_args(args, 100, 1, 1, BIT_ULL(ETH_MODE_100GAUI_1_C2M_BIT));
+		break;
+	case ETHTOOL_LINK_MODE_200000baseSR2_Full_BIT:
+		set_mod_args(args, 200, 1, 1, BIT_ULL(ETH_MODE_200GAUI_2_C2C_BIT));
+		break;
+	case ETHTOOL_LINK_MODE_200000baseLR2_ER2_FR2_Full_BIT:
+		set_mod_args(args, 200, 1, 1, BIT_ULL(ETH_MODE_200GAUI_2_C2M_BIT));
+		break;
+	case ETHTOOL_LINK_MODE_200000baseSR4_Full_BIT:
+		set_mod_args(args, 200, 1, 1, BIT_ULL(ETH_MODE_200GAUI_4_C2C_BIT));
+		break;
+	case ETHTOOL_LINK_MODE_200000baseLR4_ER4_FR4_Full_BIT:
+		set_mod_args(args, 200, 1, 1, BIT_ULL(ETH_MODE_200GAUI_4_C2M_BIT));
 		break;
 	default:
 		set_mod_args(args, 0, 1, 0, BIT_ULL(CGX_MODE_MAX));
@@ -1480,25 +1721,36 @@ int cgx_get_fwdata_base(u64 *base)
 }
 
 int cgx_set_link_mode(void *cgxd, struct cgx_set_link_mode_args args,
+		      struct cgx_lmac_fwdata_s *linkmodes,
 		      int cgx_id, int lmac_id)
 {
 	struct cgx *cgx = cgxd;
 	u64 req = 0, resp;
+	u8 bit;
 
 	if (!cgx)
 		return -ENODEV;
 
-	if (args.mode)
-		otx2_map_ethtool_link_modes(args.mode, &args);
-	if (!args.speed && args.duplex && !args.an)
-		return -EINVAL;
+	for_each_set_bit(bit, args.advertising,
+			 __ETHTOOL_LINK_MODE_MASK_NBITS)
+		otx2_map_ethtool_link_modes(bit, &args);
+
+	if (args.multimode) {
+		if (linkmodes->advertised_link_modes_own != CGX_CMD_OWN_NS)
+			return -EBUSY;
+
+		linkmodes->advertised_link_modes = args.mode;
+		/* Update ownership */
+		linkmodes->advertised_link_modes_own = CGX_CMD_OWN_FIRMWARE;
+		args.mode = GENMASK_ULL(41, 0);
+	}
 
 	req = FIELD_SET(CMDREG_ID, CGX_CMD_MODE_CHANGE, req);
 	req = FIELD_SET(CMDMODECHANGE_SPEED,
 			cgx_link_usertable_index_map(args.speed), req);
 	req = FIELD_SET(CMDMODECHANGE_DUPLEX, args.duplex, req);
 	req = FIELD_SET(CMDMODECHANGE_AN, args.an, req);
-	req = FIELD_SET(CMDMODECHANGE_PORT, args.ports, req);
+	req = FIELD_SET(CMDMODECHANGE_MODE_BASEIDX, args.mode_baseidx, req);
 	req = FIELD_SET(CMDMODECHANGE_FLAGS, args.mode, req);
 
 	return cgx_fwi_cmd_generic(req, &resp, cgx, lmac_id);
@@ -1534,6 +1786,35 @@ int cgx_get_phy_fec_stats(void *cgxd, int lmac_id)
 
 	req = FIELD_SET(CMDREG_ID, CGX_CMD_GET_PHY_FEC_STATS, req);
 	return cgx_fwi_cmd_generic(req, &resp, cgx, lmac_id);
+}
+
+int cgx_set_phy_mod_type(int mod, void *cgxd, int lmac_id)
+{
+	struct cgx *cgx = cgxd;
+	u64 req = 0, resp;
+
+	if (!cgx)
+		return -ENODEV;
+
+	req = FIELD_SET(CMDREG_ID, CGX_CMD_SET_PHY_MOD_TYPE, req);
+	req = FIELD_SET(CMDSETPHYMODTYPE, mod, req);
+	return cgx_fwi_cmd_generic(req, &resp, cgx, lmac_id);
+}
+
+int cgx_get_phy_mod_type(void *cgxd, int lmac_id)
+{
+	struct cgx *cgx = cgxd;
+	u64 req = 0, resp;
+	int err;
+
+	if (!cgx)
+		return -ENODEV;
+
+	req = FIELD_SET(CMDREG_ID, CGX_CMD_GET_PHY_MOD_TYPE, req);
+	err = cgx_fwi_cmd_generic(req, &resp, cgx, lmac_id);
+	if (!err)
+		return FIELD_GET(RESP_GETPHYMODTYPE, resp);
+	return err;
 }
 
 static int cgx_fwi_link_change(struct cgx *cgx, int lmac_id, bool enable)
@@ -1604,6 +1885,17 @@ static void cgx_lmac_linkup_work(struct work_struct *work)
 				 cgx->cgx_id, i);
 	}
 }
+
+int cgx_set_link_state(void *cgxd, int lmac_id, bool enable)
+{
+	struct cgx *cgx = cgxd;
+
+	if (!cgx)
+		return -ENODEV;
+
+	return cgx_fwi_link_change(cgx, lmac_id, enable);
+}
+EXPORT_SYMBOL(cgx_set_link_state);
 
 int cgx_lmac_linkup_start(void *cgxd)
 {
@@ -1682,11 +1974,44 @@ unsigned long cgx_get_lmac_bmap(void *cgxd)
 	return cgx->lmac_bmap;
 }
 
+void cgx_lmac_enadis_higig2(void *cgxd, int lmac_id, bool enable)
+{
+	struct cgx *cgx = cgxd;
+	u64 req = 0, resp;
+
+	/* disable 802.3 pause frames before enabling higig2 */
+	if (enable) {
+		cgx_lmac_enadis_8023_pause_frm(cgxd, lmac_id, false, false);
+		cgx_lmac_enadis_higig2_pause_frm(cgxd, lmac_id, true, true);
+	}
+
+	req = FIELD_SET(CMDREG_ID, CGX_CMD_HIGIG, req);
+	req = FIELD_SET(CMDREG_ENABLE, enable, req);
+	cgx_fwi_cmd_generic(req, &resp, cgx, lmac_id);
+
+	/* enable 802.3 pause frames as higig2 disabled */
+	if (!enable) {
+		cgx_lmac_enadis_higig2_pause_frm(cgxd, lmac_id, false, false);
+		cgx_lmac_enadis_8023_pause_frm(cgxd, lmac_id, true, true);
+	}
+}
+
+bool is_higig2_enabled(void *cgxd, int lmac_id)
+{
+	struct cgx *cgx = cgxd;
+	u64 cfg;
+
+	cfg = cgx_read(cgx, lmac_id, CGXX_SMUX_TX_CTL);
+	return (cfg & CGXX_SMUX_TX_CTL_HIGIG_EN);
+}
+
 static int cgx_lmac_init(struct cgx *cgx)
 {
+	u8 max_dmac_filters;
 	struct lmac *lmac;
-	u64 lmac_list;
-	int i, err;
+	u64 lmac_list = 0;
+	int err, filter;
+	unsigned int i;
 
 	/* lmac_list specifies which lmacs are enabled
 	 * when bit n is set to 1, LMAC[n] is enabled
@@ -1712,7 +2037,7 @@ static int cgx_lmac_init(struct cgx *cgx)
 			err = -ENOMEM;
 			goto err_lmac_free;
 		}
-		sprintf(lmac->name, "cgx_fwi_%d_%d", cgx->cgx_id, i);
+		sprintf(lmac->name, "cgx_fwi_%u_%u", cgx->cgx_id, i);
 		if (cgx->mac_ops->non_contiguous_serdes_lane) {
 			lmac->lmac_id = __ffs64(lmac_list);
 			lmac_list   &= ~BIT_ULL(lmac->lmac_id);
@@ -1724,6 +2049,8 @@ static int cgx_lmac_init(struct cgx *cgx)
 		lmac->mac_to_index_bmap.max =
 				cgx->mac_ops->dmac_filter_count /
 				cgx->lmac_count;
+
+		max_dmac_filters = lmac->mac_to_index_bmap.max;
 
 		err = rvu_alloc_bitmap(&lmac->mac_to_index_bmap);
 		if (err)
@@ -1754,6 +2081,15 @@ static int cgx_lmac_init(struct cgx *cgx)
 		set_bit(lmac->lmac_id, &cgx->lmac_bmap);
 		cgx->mac_ops->mac_pause_frm_config(cgx, lmac->lmac_id, true);
 		lmac->lmac_type = cgx->mac_ops->get_lmac_type(cgx, lmac->lmac_id);
+
+		/* Disable stale DMAC filters for sane state */
+		for (filter = 0; filter < max_dmac_filters; filter++)
+			cgx_lmac_addr_del(cgx->cgx_id, lmac->lmac_id, filter);
+
+		/* As cgx_lmac_addr_del does not clear entry for index 0
+		 * so it needs to be done explicitly
+		 */
+		cgx_lmac_addr_reset(cgx->cgx_id, lmac->lmac_id);
 	}
 
 	/* Start X2P reset on given MAC block */
@@ -1894,6 +2230,7 @@ static struct mac_ops	cgx_mac_ops    = {
 	.pfc_config =                   cgx_lmac_pfc_config,
 	.mac_get_pfc_frm_cfg   =        cgx_lmac_get_pfc_frm_cfg,
 	.mac_reset   =			cgx_lmac_reset,
+	.get_dmacflt_dropped_pktcnt      =      cgx_get_dmacflt_dropped_pktcnt,
 	.mac_stats_reset       =	cgx_stats_reset,
 	.mac_x2p_reset                   =      cgx_x2p_reset,
 	.mac_enadis_rx			 =      cgx_enadis_rx,
@@ -1933,11 +2270,36 @@ static int cgx_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto err_disable_device;
 	}
 
+	err = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(48));
+	if (err) {
+		dev_err(dev, "DMA mask config failed, abort\n");
+		goto err_release_regions;
+	}
+
 	/* MAP configuration registers */
 	cgx->reg_base = pcim_iomap(pdev, PCI_CFG_REG_BAR_NUM, 0);
 	if (!cgx->reg_base) {
 		dev_err(dev, "CGX: Cannot map CSR memory space, aborting\n");
 		err = -ENOMEM;
+		goto err_release_regions;
+	}
+
+	cgx->cgx_id = (pci_resource_start(pdev, PCI_CFG_REG_BAR_NUM) >> 24)
+		& CGX_ID_MASK;
+
+	if (is_cn20k(pdev)) {
+		err = pci_read_config_byte(pdev, PCI_REVISION_ID, &cgx->cgx_id);
+		if (err) {
+			dev_err(dev, "Unable to set CGX id\n");
+			return err;
+		}
+	}
+
+	if (!is_cn20k(pdev) &&
+	    !is_cgx_mapped_to_nix(pdev->subsystem_device, cgx->cgx_id)) {
+		dev_notice(dev, "CGX %d not mapped to NIX, skipping probe\n",
+			   cgx->cgx_id);
+		err = -ENODEV;
 		goto err_release_regions;
 	}
 
@@ -1950,14 +2312,11 @@ static int cgx_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	nvec = pci_msix_vec_count(cgx->pdev);
 	err = pci_alloc_irq_vectors(pdev, nvec, nvec, PCI_IRQ_MSIX);
-	if (err < 0 || err != nvec) {
+	if (err < 0) {
 		dev_err(dev, "Request for %d msix vectors failed, err %d\n",
 			nvec, err);
 		goto err_release_regions;
 	}
-
-	cgx->cgx_id = (pci_resource_start(pdev, PCI_CFG_REG_BAR_NUM) >> 24)
-		& CGX_ID_MASK;
 
 	/* init wq for processing linkup requests */
 	INIT_WORK(&cgx->cgx_cmd_work, cgx_lmac_linkup_work);
@@ -1969,7 +2328,6 @@ static int cgx_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	list_add(&cgx->cgx_list, &cgx_list);
-
 
 	cgx_populate_features(cgx);
 

@@ -11,13 +11,11 @@
 #include "rvu_reg.h"
 #include "mbox.h"
 #include "rvu.h"
+#include "cn20k/reg.h"
 
 /* CPT PF device id */
-#define	PCI_DEVID_OTX2_CPT_PF	0xA0FD
-#define	PCI_DEVID_OTX2_CPT10K_PF 0xA0F2
-
-/* Length of initial context fetch in 128 byte words */
-#define CPT_CTX_ILEN    1ULL
+#define	PCI_PF_DEVID_OTX2_CPT_PF 0xFD
+#define	PCI_PF_DEVID_CN10K_CPT_PF 0xF2
 
 /* Interrupt vector count of CPT RVU and RAS interrupts */
 #define CPT_10K_AF_RVU_RAS_INT_VEC_CNT  2
@@ -43,36 +41,38 @@
 	(_rsp)->free_sts_##etype = free_sts;                        \
 })
 
+#define MAX_RE  GENMASK_ULL(63, 48)
 #define MAX_AE  GENMASK_ULL(47, 32)
 #define MAX_IE  GENMASK_ULL(31, 16)
 #define MAX_SE  GENMASK_ULL(15, 0)
 
 static u16 cpt_max_engines_get(struct rvu *rvu)
 {
-	u16 max_ses, max_ies, max_aes;
+	u16 max_ses, max_ies, max_aes, max_re;
 	u64 reg;
 
 	reg = rvu_read64(rvu, BLKADDR_CPT0, CPT_AF_CONSTANTS1);
 	max_ses = FIELD_GET(MAX_SE, reg);
 	max_ies = FIELD_GET(MAX_IE, reg);
 	max_aes = FIELD_GET(MAX_AE, reg);
+	max_re = FIELD_GET(MAX_RE, reg);
 
-	return max_ses + max_ies + max_aes;
+	return max_ses + max_ies + max_aes + max_re;
 }
 
 /* Number of flt interrupt vectors are depends on number of engines that the
  * chip has. Each flt vector represents 64 engines.
  */
-static int cpt_10k_flt_nvecs_get(struct rvu *rvu, u16 max_engs)
+static int cpt_cnxk_flt_nvecs_get(struct rvu *rvu, u16 max_engs)
 {
 	int flt_vecs;
 
 	flt_vecs = DIV_ROUND_UP(max_engs, 64);
 
-	if (flt_vecs > CPT_10K_AF_INT_VEC_FLT_MAX) {
+	if (flt_vecs > CPT_CNXK_AF_INT_VEC_FLT_MAX) {
 		dev_warn_once(rvu->dev, "flt_vecs:%d exceeds the max vectors:%d\n",
-			      flt_vecs, CPT_10K_AF_INT_VEC_FLT_MAX);
-		flt_vecs = CPT_10K_AF_INT_VEC_FLT_MAX;
+			      flt_vecs, CPT_CNXK_AF_INT_VEC_FLT_MAX);
+		flt_vecs = CPT_CNXK_AF_INT_VEC_FLT_MAX;
 	}
 
 	return flt_vecs;
@@ -84,7 +84,7 @@ static irqreturn_t cpt_af_flt_intr_handler(int vec, void *ptr)
 	struct rvu *rvu = block->rvu;
 	int blkaddr = block->addr;
 	u64 reg, val;
-	int i, eng;
+	int i, eng = 0;
 	u8 grp;
 
 	reg = rvu_read64(rvu, blkaddr, CPT_AF_FLTX_INT(vec));
@@ -101,6 +101,9 @@ static irqreturn_t cpt_af_flt_intr_handler(int vec, void *ptr)
 			break;
 		case 2:
 			eng = i + 128;
+			break;
+		case 3:
+			eng = i + 192;
 			break;
 		}
 		grp = rvu_read64(rvu, blkaddr, CPT_AF_EXEX_CTL2(eng)) & 0xFF;
@@ -137,7 +140,12 @@ static irqreturn_t rvu_cpt_af_flt1_intr_handler(int irq, void *ptr)
 
 static irqreturn_t rvu_cpt_af_flt2_intr_handler(int irq, void *ptr)
 {
-	return cpt_af_flt_intr_handler(CPT_10K_AF_INT_VEC_FLT2, ptr);
+	return cpt_af_flt_intr_handler(CPT_CNXK_AF_INT_VEC_FLT2, ptr);
+}
+
+static irqreturn_t rvu_cpt_af_flt3_intr_handler(int irq, void *ptr)
+{
+	return cpt_af_flt_intr_handler(CPT_CNXK_AF_INT_VEC_FLT3, ptr);
 }
 
 static irqreturn_t rvu_cpt_af_rvu_intr_handler(int irq, void *ptr)
@@ -187,7 +195,7 @@ static int rvu_cpt_do_register_interrupt(struct rvu_block *block, int irq_offs,
 	return 0;
 }
 
-static void cpt_10k_unregister_interrupts(struct rvu_block *block, int off)
+static void cpt_cnxk_unregister_interrupts(struct rvu_block *block, int off)
 {
 	struct rvu *rvu = block->rvu;
 	int blkaddr = block->addr;
@@ -196,10 +204,10 @@ static void cpt_10k_unregister_interrupts(struct rvu_block *block, int off)
 	u8 nr;
 
 	max_engs = cpt_max_engines_get(rvu);
-	flt_vecs = cpt_10k_flt_nvecs_get(rvu, max_engs);
+	flt_vecs = cpt_cnxk_flt_nvecs_get(rvu, max_engs);
 
 	/* Disable all CPT AF interrupts */
-	for (i = CPT_10K_AF_INT_VEC_FLT0; i < flt_vecs; i++) {
+	for (i = CPT_CNXK_AF_INT_VEC_FLT0; i < flt_vecs; i++) {
 		nr = (max_engs > 64) ? 64 : max_engs;
 		max_engs -= nr;
 		rvu_write64(rvu, blkaddr, CPT_AF_FLTX_INT_ENA_W1C(i),
@@ -232,8 +240,9 @@ static void cpt_unregister_interrupts(struct rvu *rvu, int blkaddr)
 		return;
 	}
 	block = &hw->block[blkaddr];
-	if (!is_rvu_otx2(rvu))
-		return cpt_10k_unregister_interrupts(block, offs);
+
+	if (!is_rvu_otx2(rvu) || (is_cn20k(rvu->pdev)))
+		return cpt_cnxk_unregister_interrupts(block, offs);
 
 	/* Disable all CPT AF interrupts */
 	for (i = 0; i < CPT_AF_INT_VEC_RVU; i++)
@@ -254,32 +263,39 @@ void rvu_cpt_unregister_interrupts(struct rvu *rvu)
 	cpt_unregister_interrupts(rvu, BLKADDR_CPT1);
 }
 
-static int cpt_10k_register_interrupts(struct rvu_block *block, int off)
+static int cpt_cnxkflt_register_interrupts(struct rvu_block *block, int off,
+					   u32 max_engs)
 {
-	int rvu_intr_vec, ras_intr_vec;
 	struct rvu *rvu = block->rvu;
 	int blkaddr = block->addr;
 	irq_handler_t flt_fn;
-	int i, ret, flt_vecs;
-	u16 max_engs;
+	int i, ret = 0;
+	int flt_vecs;
 	u8 nr;
 
-	max_engs = cpt_max_engines_get(rvu);
-	flt_vecs = cpt_10k_flt_nvecs_get(rvu, max_engs);
+	flt_vecs = cpt_cnxk_flt_nvecs_get(rvu, max_engs);
 
-	for (i = CPT_10K_AF_INT_VEC_FLT0; i < flt_vecs; i++) {
+	for (i = CPT_CNXK_AF_INT_VEC_FLT0; i < flt_vecs; i++) {
 		sprintf(&rvu->irq_name[(off + i) * NAME_SIZE], "CPTAF FLT%d", i);
 
 		switch (i) {
-		case CPT_10K_AF_INT_VEC_FLT0:
+		case CPT_CNXK_AF_INT_VEC_FLT0:
 			flt_fn = rvu_cpt_af_flt0_intr_handler;
 			break;
-		case CPT_10K_AF_INT_VEC_FLT1:
+		case CPT_CNXK_AF_INT_VEC_FLT1:
 			flt_fn = rvu_cpt_af_flt1_intr_handler;
 			break;
-		case CPT_10K_AF_INT_VEC_FLT2:
+		case CPT_CNXK_AF_INT_VEC_FLT2:
 			flt_fn = rvu_cpt_af_flt2_intr_handler;
 			break;
+		case CPT_CNXK_AF_INT_VEC_FLT3:
+			flt_fn = rvu_cpt_af_flt3_intr_handler;
+			break;
+		default:
+			dev_err(rvu->dev,
+				"Missing CPT fault vector-%d max-engines-%d\n",
+				i, cpt_max_engines_get(rvu));
+			continue;
 		}
 		ret = rvu_cpt_do_register_interrupt(block, off + i,
 						    flt_fn, &rvu->irq_name[(off + i) * NAME_SIZE]);
@@ -292,7 +308,62 @@ static int cpt_10k_register_interrupts(struct rvu_block *block, int off)
 			    INTR_MASK(nr));
 	}
 
-	rvu_intr_vec = flt_vecs;
+err:
+	return ret;
+}
+
+static int cpt_20k_register_interrupts(struct rvu_block *block, int off)
+{
+	int rvu_intr_vec, ras_intr_vec;
+	struct rvu *rvu = block->rvu;
+	int blkaddr = block->addr;
+	u32 max_engs;
+	int ret;
+
+	max_engs = cpt_max_engines_get(rvu);
+
+	ret = cpt_cnxkflt_register_interrupts(block, off, max_engs);
+	if (ret)
+		goto err;
+
+	rvu_intr_vec = cpt_cnxk_flt_nvecs_get(rvu, max_engs);
+	ras_intr_vec = rvu_intr_vec + 1;
+
+	ret = rvu_cpt_do_register_interrupt(block, off + rvu_intr_vec,
+					    rvu_cpt_af_rvu_intr_handler,
+					    "CPTAF RVU");
+	if (ret)
+		goto err;
+	rvu_write64(rvu, blkaddr, CPT_AF_RVU_INT_ENA_W1S, 0x1);
+
+	ret = rvu_cpt_do_register_interrupt(block, off + ras_intr_vec,
+					    rvu_cpt_af_ras_intr_handler,
+					    "CPTAF RAS");
+	if (ret)
+		goto err;
+	rvu_write64(rvu, blkaddr, CPT_AF_RAS_INT_ENA_W1S, 0x1);
+
+	return 0;
+err:
+	rvu_cpt_unregister_interrupts(rvu);
+	return ret;
+}
+
+static int cpt_10k_register_interrupts(struct rvu_block *block, int off)
+{
+	int rvu_intr_vec, ras_intr_vec;
+	struct rvu *rvu = block->rvu;
+	int blkaddr = block->addr;
+	u32 max_engs;
+	int ret;
+
+	max_engs = cpt_max_engines_get(rvu);
+
+	ret = cpt_cnxkflt_register_interrupts(block, off, max_engs);
+	if (ret)
+		goto err;
+
+	rvu_intr_vec = cpt_cnxk_flt_nvecs_get(rvu, max_engs);
 	ras_intr_vec = rvu_intr_vec + 1;
 
 	ret = rvu_cpt_do_register_interrupt(block, off + rvu_intr_vec,
@@ -332,6 +403,9 @@ static int cpt_register_interrupts(struct rvu *rvu, int blkaddr)
 			 "Failed to get CPT_AF_INT vector offsets\n");
 		return 0;
 	}
+
+	if (is_cn20k(rvu->pdev))
+		return cpt_20k_register_interrupts(block, offs);
 
 	if (!is_rvu_otx2(rvu))
 		return cpt_10k_register_interrupts(block, offs);
@@ -386,45 +460,47 @@ int rvu_cpt_register_interrupts(struct rvu *rvu)
 
 static int get_cpt_pf_num(struct rvu *rvu)
 {
-	int i, domain_nr, cpt_pf_num = -1;
-	struct pci_dev *pdev;
+	int i, cpt_pf_num = -1;
+	u64 id_cfg, cfg;
+	u8 pf_devid;
 
-	domain_nr = pci_domain_nr(rvu->pdev->bus);
+	pf_devid = is_rvu_otx2(rvu) ? PCI_PF_DEVID_OTX2_CPT_PF :
+				       PCI_PF_DEVID_CN10K_CPT_PF;
+
 	for (i = 0; i < rvu->hw->total_pfs; i++) {
-		pdev = pci_get_domain_bus_and_slot(domain_nr, i + 1, 0);
-		if (!pdev)
+		cfg = rvu_read64(rvu, BLKADDR_RVUM, RVU_PRIV_PFX_CFG(i));
+		if (!(cfg & BIT_ULL(20)))
 			continue;
 
-		if (pdev->device == PCI_DEVID_OTX2_CPT_PF ||
-		    pdev->device == PCI_DEVID_OTX2_CPT10K_PF) {
+		id_cfg = rvu_read64(rvu, BLKADDR_RVUM, RVU_PRIV_PFX_ID_CFG(i));
+		if ((id_cfg & 0xFF) == pf_devid) {
 			cpt_pf_num = i;
-			put_device(&pdev->dev);
 			break;
 		}
-		put_device(&pdev->dev);
 	}
+
 	return cpt_pf_num;
-}
-
-static bool is_cpt_pf(struct rvu *rvu, u16 pcifunc)
-{
-	int cpt_pf_num = rvu->cpt_pf_num;
-
-	if (rvu_get_pf(pcifunc) != cpt_pf_num)
-		return false;
-	if (pcifunc & RVU_PFVF_FUNC_MASK)
-		return false;
-
-	return true;
 }
 
 static bool is_cpt_vf(struct rvu *rvu, u16 pcifunc)
 {
 	int cpt_pf_num = rvu->cpt_pf_num;
 
-	if (rvu_get_pf(pcifunc) != cpt_pf_num)
+	if (rvu_get_pf(rvu->pdev, pcifunc) != cpt_pf_num)
 		return false;
 	if (!(pcifunc & RVU_PFVF_FUNC_MASK))
+		return false;
+
+	return true;
+}
+
+static bool is_cpt_pf(struct rvu *rvu, u16 pcifunc)
+{
+	int cpt_pf_num = rvu->cpt_pf_num;
+
+	if (rvu_get_pf(rvu->pdev, pcifunc) != cpt_pf_num)
+		return false;
+	if (pcifunc & RVU_PFVF_FUNC_MASK)
 		return false;
 
 	return true;
@@ -439,6 +515,60 @@ static int validate_and_get_cpt_blkaddr(int req_blkaddr)
 		return -EINVAL;
 
 	return blkaddr;
+}
+
+static inline bool otx2_cpt_validate_access(struct rvu *rvu, u16 pcifunc,
+					    int blkaddr)
+{
+	struct rvu_block *block;
+	int num_lfs;
+
+	block = &rvu->hw->block[blkaddr];
+	num_lfs = rvu_get_rsrc_mapcount(rvu_get_pfvf(rvu, pcifunc),
+					block->addr);
+
+	return (is_cpt_pf(rvu, pcifunc) ||
+		is_cpt_vf(rvu, pcifunc) ||
+		num_lfs);
+}
+
+int otx2_cpt_que_pri_mask(struct rvu *rvu)
+{
+	return (is_cn20k(rvu->pdev)) ? ((1 << CN20K_NUM_PRI_BITS) - 1)
+				     : ((1 << CN10K_NUM_PRI_BITS) - 1);
+}
+
+int rvu_mbox_handler_cpt_set_que_pri(struct rvu *rvu,
+				     struct cpt_queue_pri_req_msg *req,
+				     struct msg_rsp *rsp)
+{
+	u8 pri_max = otx2_cpt_que_pri_mask(rvu);
+	u16 pcifunc = req->hdr.pcifunc;
+	struct rvu_block *block;
+	int cptlf, blkaddr;
+	u16 actual_slot;
+	u64 val;
+
+	blkaddr = rvu_get_blkaddr_from_slot(rvu, BLKTYPE_CPT, pcifunc,
+					    req->slot, &actual_slot);
+	if (blkaddr < 0)
+		return CPT_AF_ERR_LF_INVALID;
+
+	block = &rvu->hw->block[blkaddr];
+
+	cptlf = rvu_get_lf(rvu, block, pcifunc, actual_slot);
+	if (cptlf < 0)
+		return CPT_AF_ERR_LF_INVALID;
+
+	if (req->queue_pri > pri_max)
+		return CPT_AF_ERR_PRI_INVALID;
+
+	val = rvu_read64(rvu, blkaddr, CPT_AF_LFX_CTL(cptlf));
+	val &= ~pri_max;
+	val |= req->queue_pri;
+	rvu_write64(rvu, blkaddr, CPT_AF_LFX_CTL(cptlf), val);
+
+	return 0;
 }
 
 int rvu_mbox_handler_cpt_lf_alloc(struct rvu *rvu,
@@ -494,6 +624,13 @@ int rvu_mbox_handler_cpt_lf_alloc(struct rvu *rvu,
 				val |= (req->ctx_ilen << 17);
 			else
 				val |= (CPT_CTX_ILEN << 17);
+		}
+
+		if (req->rxc_ena && slot == req->rxc_ena_lf_id) {
+			if (is_cn10ka_b0(rvu) || is_cn10kb_a0(rvu) || is_cn10kb_a1(rvu))
+				val |= BIT_ULL(12) | BIT_ULL(11);
+			else if (is_cn20k(rvu->pdev))
+				val |= BIT_ULL(11);
 		}
 
 		rvu_write64(rvu, blkaddr, CPT_AF_LFX_CTL(cptlf), val);
@@ -740,22 +877,27 @@ static bool validate_and_update_reg_offset(struct rvu *rvu,
 		case CPT_AF_BLK_RST:
 		case CPT_AF_CONSTANTS1:
 		case CPT_AF_CTX_FLUSH_TIMER:
+		case CPT_AF_CTX_PSP_TIMER_CTL:
 		case CPT_AF_RXC_CFG1:
 			return true;
 		}
+
+		if (offset & 7)
+			return false;
+
+		if ((offset & 0xFF00) == CPT_AF_UCCX_CTL(0))
+			return true;
+
+		if ((offset & 0xFFF00) == CPT_AF_GRPX_THR(0, rvu->pdev))
+			return true;
 
 		switch (offset & 0xFF000) {
 		case CPT_AF_EXEX_STS(0):
 		case CPT_AF_EXEX_CTL(0):
 		case CPT_AF_EXEX_CTL2(0):
 		case CPT_AF_EXEX_UCODE_BASE(0):
-			if (offset & 7)
-				return false;
-			break;
-		default:
-			return false;
+			return true;
 		}
-		return true;
 	}
 	return false;
 }
@@ -764,6 +906,7 @@ int rvu_mbox_handler_cpt_rd_wr_register(struct rvu *rvu,
 					struct cpt_rd_wr_reg_msg *req,
 					struct cpt_rd_wr_reg_msg *rsp)
 {
+	u16 pcifunc = req->hdr.pcifunc;
 	u64 offset = req->reg_offset;
 	int blkaddr;
 
@@ -771,9 +914,8 @@ int rvu_mbox_handler_cpt_rd_wr_register(struct rvu *rvu,
 	if (blkaddr < 0)
 		return blkaddr;
 
-	/* This message is accepted only if sent from CPT PF/VF */
-	if (!is_cpt_pf(rvu, req->hdr.pcifunc) &&
-	    !is_cpt_vf(rvu, req->hdr.pcifunc))
+	/* Allow if accessed by CPT PF or LF is attached to given PF/VF */
+	if (!otx2_cpt_validate_access(rvu, pcifunc, blkaddr))
 		return CPT_AF_ERR_ACCESS_DENIED;
 
 	if (!validate_and_update_reg_offset(rvu, req, &offset))
@@ -789,6 +931,27 @@ int rvu_mbox_handler_cpt_rd_wr_register(struct rvu *rvu,
 		rsp->val = rvu_read64(rvu, blkaddr, offset);
 
 	return 0;
+}
+
+static void get_cn20k_rxc_sts(struct rvu *rvu, struct cpt_sts_rsp *rsp,
+			      int blkaddr)
+{
+	/* CN20k supports multiple RXC queues while this mailbox can be used
+	 * for single RXC queue, So CN20k provide first RXC queue information.
+	 */
+	rsp->x2p_link_cfg0 = rvu_read64(rvu, blkaddr,
+					CPT_AF_RXC_QUE_X2PX_LINK_CFG(0));
+	rsp->x2p_link_cfg1 = rvu_read64(rvu, blkaddr,
+					CPT_AF_RXC_QUE_X2PX_LINK_CFG(1));
+	rsp->rxc_time = rvu_read64(rvu, blkaddr, CPT_AF_RXC_TIME);
+	rsp->rxc_time_cfg = rvu_read64(rvu, blkaddr,
+				       CPT_AF_RXC_TIME_CFG);
+	rsp->rxc_active_sts = rvu_read64(rvu, blkaddr,
+					 CPT_AF_RXC_QUEX_ACTIVE_STS(0));
+	rsp->rxc_zombie_sts = rvu_read64(rvu, blkaddr,
+					 CPT_AF_RXC_QUEX_ZOMBIE_STS(0));
+	rsp->rxc_dfrg = rvu_read64(rvu, blkaddr,
+				   CPT_AF_RXC_QUEX_DFRG(0));
 }
 
 static void get_ctx_pc(struct rvu *rvu, struct cpt_sts_rsp *rsp, int blkaddr)
@@ -818,11 +981,17 @@ static void get_ctx_pc(struct rvu *rvu, struct cpt_sts_rsp *rsp, int blkaddr)
 	rsp->ctx_err = rvu_read64(rvu, blkaddr, CPT_AF_CTX_ERR);
 	rsp->ctx_enc_id = rvu_read64(rvu, blkaddr, CPT_AF_CTX_ENC_ID);
 	rsp->ctx_flush_timer = rvu_read64(rvu, blkaddr, CPT_AF_CTX_FLUSH_TIMER);
-	rsp->x2p_link_cfg0 = rvu_read64(rvu, blkaddr, CPT_AF_X2PX_LINK_CFG(0));
-	rsp->x2p_link_cfg1 = rvu_read64(rvu, blkaddr, CPT_AF_X2PX_LINK_CFG(1));
 
 	if (!hw->cap.cpt_rxc)
 		return;
+
+	if (is_cn20k(rvu->pdev)) {
+		get_cn20k_rxc_sts(rvu, rsp, blkaddr);
+		return;
+	}
+
+	rsp->x2p_link_cfg0 = rvu_read64(rvu, blkaddr, CPT_AF_X2PX_LINK_CFG(0));
+	rsp->x2p_link_cfg1 = rvu_read64(rvu, blkaddr, CPT_AF_X2PX_LINK_CFG(1));
 	rsp->rxc_time = rvu_read64(rvu, blkaddr, CPT_AF_RXC_TIME);
 	rsp->rxc_time_cfg = rvu_read64(rvu, blkaddr, CPT_AF_RXC_TIME_CFG);
 	rsp->rxc_active_sts = rvu_read64(rvu, blkaddr, CPT_AF_RXC_ACTIVE_STS);
@@ -858,15 +1027,15 @@ static void get_eng_sts(struct rvu *rvu, struct cpt_sts_rsp *rsp, int blkaddr)
 int rvu_mbox_handler_cpt_sts(struct rvu *rvu, struct cpt_sts_req *req,
 			     struct cpt_sts_rsp *rsp)
 {
+	u16 pcifunc = req->hdr.pcifunc;
 	int blkaddr;
 
 	blkaddr = validate_and_get_cpt_blkaddr(req->blkaddr);
 	if (blkaddr < 0)
 		return blkaddr;
 
-	/* This message is accepted only if sent from CPT PF/VF */
-	if (!is_cpt_pf(rvu, req->hdr.pcifunc) &&
-	    !is_cpt_vf(rvu, req->hdr.pcifunc))
+	/* Allow if accessed by CPT PF or LF is attached to given PF/VF */
+	if (!otx2_cpt_validate_access(rvu, pcifunc, blkaddr))
 		return CPT_AF_ERR_ACCESS_DENIED;
 
 	get_ctx_pc(rvu, rsp, blkaddr);
@@ -875,26 +1044,34 @@ int rvu_mbox_handler_cpt_sts(struct rvu *rvu, struct cpt_sts_req *req,
 	get_eng_sts(rvu, rsp, blkaddr);
 
 	/* Read CPT instruction PC registers */
-	rsp->inst_req_pc = rvu_read64(rvu, blkaddr, CPT_AF_INST_REQ_PC);
-	rsp->inst_lat_pc = rvu_read64(rvu, blkaddr, CPT_AF_INST_LATENCY_PC);
-	rsp->rd_req_pc = rvu_read64(rvu, blkaddr, CPT_AF_RD_REQ_PC);
-	rsp->rd_lat_pc = rvu_read64(rvu, blkaddr, CPT_AF_RD_LATENCY_PC);
-	rsp->rd_uc_pc = rvu_read64(rvu, blkaddr, CPT_AF_RD_UC_PC);
-	rsp->active_cycles_pc = rvu_read64(rvu, blkaddr,
-					   CPT_AF_ACTIVE_CYCLES_PC);
+	if (is_cn20k(rvu->pdev)) {
+		rsp->inst_req_pc = rvu_read64(rvu, blkaddr,
+					      CPT_AF_CN20K_INST_REQ_PC);
+		rsp->inst_lat_pc = rvu_read64(rvu, blkaddr,
+					      CPT_AF_CN20K_INST_LATENCY_PC);
+		rsp->rd_req_pc = rvu_read64(rvu, blkaddr,
+					    CPT_AF_CN20K_RD_REQ_PC);
+		rsp->rd_lat_pc = rvu_read64(rvu, blkaddr,
+					    CPT_AF_CN20K_RD_LATENCY_PC);
+		rsp->rd_uc_pc = rvu_read64(rvu, blkaddr, CPT_AF_CN20K_RD_UC_PC);
+		rsp->active_cycles_pc = rvu_read64(rvu, blkaddr,
+						   CPT_AF_CN20K_ACTIVE_CYCLES_PC);
+	} else {
+		rsp->inst_req_pc = rvu_read64(rvu, blkaddr, CPT_AF_INST_REQ_PC);
+		rsp->inst_lat_pc = rvu_read64(rvu, blkaddr,
+					      CPT_AF_INST_LATENCY_PC);
+		rsp->rd_req_pc = rvu_read64(rvu, blkaddr, CPT_AF_RD_REQ_PC);
+		rsp->rd_lat_pc = rvu_read64(rvu, blkaddr, CPT_AF_RD_LATENCY_PC);
+		rsp->rd_uc_pc = rvu_read64(rvu, blkaddr, CPT_AF_RD_UC_PC);
+		rsp->active_cycles_pc = rvu_read64(rvu, blkaddr,
+						   CPT_AF_ACTIVE_CYCLES_PC);
+	}
 	rsp->exe_err_info = rvu_read64(rvu, blkaddr, CPT_AF_EXE_ERR_INFO);
 	rsp->cptclk_cnt = rvu_read64(rvu, blkaddr, CPT_AF_CPTCLK_CNT);
 	rsp->diag = rvu_read64(rvu, blkaddr, CPT_AF_DIAG);
 
 	return 0;
 }
-
-#define RXC_ZOMBIE_THRES  GENMASK_ULL(59, 48)
-#define RXC_ZOMBIE_LIMIT  GENMASK_ULL(43, 32)
-#define RXC_ACTIVE_THRES  GENMASK_ULL(27, 16)
-#define RXC_ACTIVE_LIMIT  GENMASK_ULL(11, 0)
-#define RXC_ACTIVE_COUNT  GENMASK_ULL(60, 48)
-#define RXC_ZOMBIE_COUNT  GENMASK_ULL(60, 48)
 
 static void cpt_rxc_time_cfg(struct rvu *rvu, struct cpt_rxc_time_cfg_req *req,
 			     int blkaddr, struct cpt_rxc_time_cfg_req *save)
@@ -925,15 +1102,27 @@ int rvu_mbox_handler_cpt_rxc_time_cfg(struct rvu *rvu,
 				      struct cpt_rxc_time_cfg_req *req,
 				      struct msg_rsp *rsp)
 {
+	struct rvu_cpt *cpt = &rvu->cpt;
+	u16 pcifunc = req->hdr.pcifunc;
 	int blkaddr;
 
 	blkaddr = validate_and_get_cpt_blkaddr(req->blkaddr);
 	if (blkaddr < 0)
 		return blkaddr;
 
-	/* This message is accepted only if sent from CPT PF/VF */
-	if (!is_cpt_pf(rvu, req->hdr.pcifunc) &&
-	    !is_cpt_vf(rvu, req->hdr.pcifunc))
+	if (is_cn20k(rvu->pdev)) {
+		if  (req->queue_id >= CPT_AF_MAX_RXC_QUEUES)
+			return CPT_AF_ERR_RXC_QUEUE_INVALID;
+
+		if (cpt->cptpfvf_map[req->queue_id] != req->hdr.pcifunc)
+			return CPT_AF_ERR_RXC_QUEUE_INVALID;
+
+		cpt_cn20k_rxc_time_cfg(rvu, blkaddr, req, NULL);
+		return 0;
+	}
+
+	/* Allow if accessed by CPT PF or LF is attached to given PF/VF */
+	if (!otx2_cpt_validate_access(rvu, pcifunc, blkaddr))
 		return CPT_AF_ERR_ACCESS_DENIED;
 
 	cpt_rxc_time_cfg(rvu, req, blkaddr, NULL);
@@ -995,7 +1184,7 @@ int rvu_mbox_handler_cpt_flt_eng_info(struct rvu *rvu, struct cpt_flt_eng_info_r
 
 	block = &rvu->hw->block[blkaddr];
 	max_engs = cpt_max_engines_get(rvu);
-	flt_vecs = cpt_10k_flt_nvecs_get(rvu, max_engs);
+	flt_vecs = cpt_cnxk_flt_nvecs_get(rvu, max_engs);
 	for (vec = 0; vec < flt_vecs; vec++) {
 		spin_lock_irqsave(&rvu->cpt_intr_lock, flags);
 		rsp->flt_eng_map[vec] = block->cpt_flt_eng_map[vec];
@@ -1009,14 +1198,13 @@ int rvu_mbox_handler_cpt_flt_eng_info(struct rvu *rvu, struct cpt_flt_eng_info_r
 	return 0;
 }
 
-static void cpt_rxc_teardown(struct rvu *rvu, int blkaddr)
+static void cpt_cn10k_rxc_flush(struct rvu *rvu, int blkaddr)
 {
 	struct cpt_rxc_time_cfg_req req, prev;
-	struct rvu_hwinfo *hw = rvu->hw;
 	int timeout = 2000;
 	u64 reg;
 
-	if (!hw->cap.cpt_rxc)
+	if (!rvu->hw->cap.cpt_rxc)
 		return;
 
 	/* Set time limit to minimum values, so that rxc entries will be
@@ -1057,6 +1245,15 @@ static void cpt_rxc_teardown(struct rvu *rvu, int blkaddr)
 
 	/* Restore config */
 	cpt_rxc_time_cfg(rvu, &prev, blkaddr, NULL);
+}
+
+static void cpt_rxc_teardown(struct rvu *rvu, u16 pcifunc, int blkaddr,
+			     int cptlf)
+{
+	if (is_cn20k(rvu->pdev))
+		cpt_cn20k_rxc_teardown(rvu, pcifunc, blkaddr);
+	else
+		cpt_cn10k_rxc_flush(rvu, blkaddr);
 }
 
 #define INFLIGHT   GENMASK_ULL(8, 0)
@@ -1118,12 +1315,16 @@ static void cpt_lf_disable_iqueue(struct rvu *rvu, int blkaddr, int slot)
 	udelay(2);
 }
 
-int rvu_cpt_lf_teardown(struct rvu *rvu, u16 pcifunc, int blkaddr, int lf, int slot)
+int rvu_cpt_lf_teardown(struct rvu *rvu, u16 pcifunc, int blkaddr, int lf,
+			int slot)
 {
 	u64 reg;
 
-	if (is_cpt_pf(rvu, pcifunc) || is_cpt_vf(rvu, pcifunc))
-		cpt_rxc_teardown(rvu, blkaddr);
+	/* Allow if accessed by CPT PF or LF is attached to given PF/VF */
+	if (!otx2_cpt_validate_access(rvu, pcifunc, blkaddr))
+		return CPT_AF_ERR_ACCESS_DENIED;
+
+	cpt_rxc_teardown(rvu, pcifunc, blkaddr, lf);
 
 	mutex_lock(&rvu->alias_lock);
 	/* Enable BAR2 ALIAS for this pcifunc. */
@@ -1144,14 +1345,21 @@ int rvu_cpt_lf_teardown(struct rvu *rvu, u16 pcifunc, int blkaddr, int lf, int s
 static int cpt_inline_inb_lf_cmd_send(struct rvu *rvu, int blkaddr,
 				      int nix_blkaddr)
 {
-	int cpt_pf_num = rvu->cpt_pf_num;
+	int cpt_pf_num = rvu->cpt_pf_num, num_lfs;
 	struct cpt_inst_lmtst_req *req;
 	dma_addr_t res_daddr;
 	int timeout = 3000;
+	u16 pcifunc;
 	u8 cpt_idx;
 	u64 *inst;
 	u16 *res;
 	int rc;
+
+	pcifunc = (cpt_pf_num & RVU_PFVF_FUNC_MASK) << RVU_PFVF_FUNC_SHIFT;
+	num_lfs = rvu_get_rsrc_mapcount(rvu_get_pfvf(rvu, pcifunc),
+					blkaddr);
+	if (num_lfs == 0)
+		return 0;
 
 	res = kzalloc(CPT_RES_LEN, GFP_KERNEL);
 	if (!res)
@@ -1244,6 +1452,14 @@ int rvu_cpt_ctx_flush(struct rvu *rvu, u16 pcifunc)
 
 	blkaddr = (nix_blkaddr == BLKADDR_NIX1) ? BLKADDR_CPT1 : BLKADDR_CPT0;
 
+	/* Return if PF/VF has no CPT LF attached to it */
+	num_lfs = rvu_get_rsrc_mapcount(rvu_get_pfvf(rvu, pcifunc), blkaddr);
+	if (num_lfs == 0)
+		return 0;
+
+	if (is_cn20k(rvu->pdev))
+		return cpt_cn20k_ctx_flush(rvu, blkaddr, pcifunc);
+
 	/* Submit CPT_INST_S to track when all packets have been
 	 * flushed through for the NIX PF FUNC in inline inbound case.
 	 */
@@ -1252,20 +1468,12 @@ int rvu_cpt_ctx_flush(struct rvu *rvu, u16 pcifunc)
 		return rc;
 
 	/* Wait for rxc entries to be flushed out */
-	cpt_rxc_teardown(rvu, blkaddr);
+	cpt_cn10k_rxc_flush(rvu, blkaddr);
 
 	reg = rvu_read64(rvu, blkaddr, CPT_AF_CONSTANTS0);
 	max_ctx_entries = (reg >> 48) & 0xFFF;
 
 	mutex_lock(&rvu->rsrc_lock);
-
-	num_lfs = rvu_get_rsrc_mapcount(rvu_get_pfvf(rvu, pcifunc),
-					blkaddr);
-	if (num_lfs == 0) {
-		dev_warn(rvu->dev, "CPT LF is not configured\n");
-		goto unlock;
-	}
-
 	/* Enable BAR2 ALIAS for this pcifunc. */
 	reg = BIT_ULL(16) | pcifunc;
 	rvu_bar2_sel_write64(rvu, blkaddr, CPT_AF_BAR2_SEL, reg);
@@ -1282,8 +1490,6 @@ int rvu_cpt_ctx_flush(struct rvu *rvu, u16 pcifunc)
 		}
 	}
 	rvu_bar2_sel_write64(rvu, blkaddr, CPT_AF_BAR2_SEL, 0);
-
-unlock:
 	mutex_unlock(&rvu->rsrc_lock);
 
 	return 0;
@@ -1312,6 +1518,9 @@ int rvu_cpt_init(struct rvu *rvu)
 				      CPT_DFLT_MAX_RXC_ICB_CNT);
 		rvu_write64(rvu, BLKADDR_CPT0, CPT_AF_RXC_CFG1, reg_val);
 	}
+
+	if (is_cn20k(rvu->pdev))
+		rvu_cn20k_cpt_init(rvu);
 
 	spin_lock_init(&rvu->cpt_intr_lock);
 
