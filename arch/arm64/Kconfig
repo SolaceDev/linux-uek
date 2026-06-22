@@ -729,6 +729,9 @@ config ARM64_ERRATUM_1530923
 config ARM64_WORKAROUND_REPEAT_TLBI
 	bool
 
+config ARM64_WORKAROUND_REPEAT_TLBI_SYNC
+	bool
+
 config ARM64_ERRATUM_2441007
 	bool "Cortex-A55: Completion of affected memory accesses might not be guaranteed by completion of a TLBI (rare)"
 	select ARM64_WORKAROUND_REPEAT_TLBI
@@ -1144,6 +1147,15 @@ config ARM64_ERRATUM_3194386
 	  SSBS. The presence of the SSBS special-purpose register is hidden
 	  from hwcaps and EL0 reads of ID_AA64PFR1_EL1, such that userspace
 	  will use the PR_SPEC_STORE_BYPASS prctl to change SSBS.
+
+	  If unsure, say Y.
+
+config ARM64_ERRATUM_CVE_2025_10263
+	bool "Cortex-*/Neoverse-*/C1-*: Completion of affected memory accesses might not be guaranteed by completion of a TLBI"
+	default y
+	select ARM64_WORKAROUND_REPEAT_TLBI_SYNC
+	help
+	  This option adds a workaround for CVE-2025-10263.
 
 	  If unsure, say Y.
 

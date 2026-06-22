@@ -29,9 +29,6 @@ fips140-y += crypto/algboss.o crypto/testmgr.o
 
 fips140-y += crypto/sha3_generic.o
 
-# ansi_cprng.ko
-fips140-y += crypto/ansi_cprng.o
-
 # jitterentropy_rng.ko
 CFLAGS_crypto/jitterentropy.o = -O0
 KASAN_SANITIZE_crypto/jitterentropy.o = n
@@ -67,12 +64,14 @@ fips140-y += $(addprefix crypto/, \
 )
 
 fips140-y += crypto/sha256_generic.o
+fips140-$(CONFIG_CRYPTO_KDF800108_CTR) += crypto/kdf_sp800108.o
 
-fips140-y += crypto/crypto_user.o
 fips140-y += crypto/cmac.o
 fips140-y += crypto/aes_generic.o
+fips140-y += crypto/aes_ti.o
 fips140-y += crypto/cbc.o
 fips140-y += crypto/ccm.o
+fips140-y += crypto/cts.o
 fips140-y += crypto/ecb.o
 fips140-y += crypto/ctr.o
 fips140-y += crypto/ecc.o
@@ -99,6 +98,7 @@ fips140-y += $(addprefix crypto/, \
 )
 
 fips140-y += crypto/gcm.o
+fips140-y += crypto/keywrap.o
 fips140-y += crypto/xts.o
 fips140-y += crypto/echainiv.o
 fips140-y += crypto/seqiv.o
@@ -109,6 +109,7 @@ fips140-y += crypto/kpp.o
 fips140-y += crypto/cipher.o
 fips140-y += crypto/crypto_null.o
 fips140-y += crypto/akcipher.o
+fips140-y += crypto/scatterwalk.o
 fips140-y += crypto/skcipher.o
 fips140-y += crypto/lskcipher.o
 fips140-y += crypto/rng.o
@@ -117,13 +118,13 @@ fips140-y += crypto/geniv.o
 
 fips140-y += crypto/crc32_generic.o
 fips140-y += crypto/crc32c_generic.o
+fips140-y += crypto/crc64_rocksoft_generic.o
 fips140-y += crypto/crct10dif_generic.o
 fips140-y += crypto/lz4.o
 fips140-y += crypto/lz4hc.o
 fips140-y += crypto/lzo.o
 fips140-y += crypto/lzo-rle.o
 fips140-y += crypto/zstd.o
-fips140-y += crypto/xxhash_generic.o
 
 #
 # crypto/asymmetric_keys/Makefile
@@ -174,6 +175,33 @@ fips140-y += lib/crypto/memneq.o
 fips140-y += lib/crypto/utils.o
 fips140-y += lib/crypto/aesgcm.o
 
+#
+# lib/crypto/mpi/Makefile
+#
+
+fips140-y += $(addprefix lib/crypto/mpi/, \
+	generic_mpih-lshift.o \
+	generic_mpih-mul1.o \
+	generic_mpih-mul2.o \
+	generic_mpih-mul3.o \
+	generic_mpih-rshift.o \
+	generic_mpih-sub1.o \
+	generic_mpih-add1.o \
+	mpicoder.o \
+	mpi-add.o \
+	mpi-bit.o \
+	mpi-cmp.o \
+	mpi-sub-ui.o \
+	mpi-div.o \
+	mpi-mod.o \
+	mpi-mul.o \
+	mpih-cmp.o \
+	mpih-div.o \
+	mpih-mul.o \
+	mpi-pow.o \
+	mpiutil.o \
+)
+
 # collect arch-specific objects
 arch-y :=
 
@@ -193,6 +221,9 @@ arch-y += sha512-ce-glue.o sha512-ce-core.o
 
 # sha3-ce.ko
 arch-y += sha3-ce-glue.o sha3-ce-core.o
+
+# ghash-ce.ko
+arch-y += ghash-ce-glue.o ghash-ce-core.o
 
 # aes-ce-cipher.ko
 arch-y += aes-ce-core.o aes-ce-glue.o
@@ -230,7 +261,7 @@ $(obj)/arch/arm64/crypto/sha256-core.S: $(src)/arch/arm64/crypto/sha512-armv8.pl
 clean-files += $(addprefix arch/arm64/crypto/, sha256-core.S sha512-core.S)
 
 # crct10dif-ce
-arch-y := crct10dif-ce-core.o crct10dif-ce-glue.o
+arch-y += crct10dif-ce-core.o crct10dif-ce-glue.o
 endif
 
 #
@@ -247,6 +278,9 @@ arch-y += sha256-ssse3-asm.o sha256-avx-asm.o sha256-avx2-asm.o sha256_ssse3_glu
 # aesni-intel.ko
 arch-y += aesni-intel_asm.o aesni-intel_glue.o
 arch-y += aes_ctrby8_avx-x86_64.o aes-gcm-aesni-x86_64.o aes-xts-avx-x86_64.o aes-gcm-avx10-x86_64.o
+
+# ghash-clmulni-intel.ko
+arch-y += ghash-clmulni-intel_asm.o ghash-clmulni-intel_glue.o
 
 # sha1-ssse3.ko
 arch-y += sha1_avx2_x86_64_asm.o sha1_ssse3_asm.o sha1_ssse3_glue.o sha1_ni_asm.o
