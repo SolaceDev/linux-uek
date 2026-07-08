@@ -278,9 +278,10 @@
 #define PPR_REQ_FAULT		0x01
 
 /* Constants for GA Log handling */
-#define GA_LOG_ENTRIES		512
+#define GA_LOG_ENTRIES		8192
 #define GA_LOG_SIZE_SHIFT	56
 #define GA_LOG_SIZE_512		(0x8ULL << GA_LOG_SIZE_SHIFT)
+#define GA_LOG_SIZE_8192	(0xCULL << GA_LOG_SIZE_SHIFT)
 #define GA_ENTRY_SIZE		8
 #define GA_LOG_SIZE		(GA_ENTRY_SIZE * GA_LOG_ENTRIES)
 
@@ -576,6 +577,12 @@ struct pdom_dev_data {
 	struct list_head list;
 };
 
+/* Keeps track of the IOMMUs attached to protection domain */
+struct pdom_iommu_info {
+	struct amd_iommu *iommu; /* IOMMUs attach to protection domain */
+	u32 refcnt;	/* Count of attached dev/pasid per domain/IOMMU */
+};
+
 /*
  * This structure contains generic data for  IOMMU protection domains
  * independent of their use.
@@ -589,8 +596,7 @@ struct protection_domain {
 	u16 id;			/* the domain id written to the device table */
 	enum protection_domain_mode pd_mode; /* Track page table type */
 	bool dirty_tracking;	/* dirty tracking is enabled in the domain */
-	unsigned dev_cnt;	/* devices assigned to this domain */
-	unsigned dev_iommu[MAX_IOMMUS]; /* per-IOMMU reference count */
+	struct xarray iommu_array;	/* per-IOMMU reference count */
 
 	struct mmu_notifier mn;	/* mmu notifier for the SVA domain */
 	struct list_head dev_data_list; /* List of pdom_dev_data */
@@ -790,7 +796,7 @@ struct amd_iommu {
 
 	u32 flags;
 	volatile u64 *cmd_sem;
-	atomic64_t cmd_sem_val;
+	u64 cmd_sem_val;
 
 #ifdef CONFIG_AMD_IOMMU_DEBUGFS
 	/* DebugFS Info */
@@ -842,7 +848,7 @@ struct devid_map {
  */
 struct iommu_dev_data {
 	/*Protect against attach/detach races */
-	spinlock_t lock;
+	struct mutex mutex;
 	spinlock_t dte_lock;              /* DTE lock for 256-bit access */
 
 	struct list_head list;		  /* For domain->dev_list */

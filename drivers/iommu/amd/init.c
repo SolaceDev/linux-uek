@@ -438,7 +438,7 @@ void iommu_feature_enable(struct amd_iommu *iommu, u8 bit)
 	iommu_feature_set(iommu, 1ULL, 1ULL, bit);
 }
 
-static void iommu_feature_disable(struct amd_iommu *iommu, u8 bit)
+void iommu_feature_disable(struct amd_iommu *iommu, u8 bit)
 {
 	iommu_feature_set(iommu, 0ULL, 1ULL, bit);
 }
@@ -778,9 +778,20 @@ void amd_iommu_restart_event_logging(struct amd_iommu *iommu)
  */
 void amd_iommu_restart_ga_log(struct amd_iommu *iommu)
 {
-	amd_iommu_restart_log(iommu, "GA", CONTROL_GAINT_EN,
-			      CONTROL_GALOG_EN, MMIO_STATUS_GALOG_RUN_MASK,
-			      MMIO_STATUS_GALOG_OVERFLOW_MASK);
+	static DEFINE_RATELIMIT_STATE(ga_log_overflow_rs, 5 * HZ, 1);
+
+	if (__ratelimit(&ga_log_overflow_rs))
+		pr_info("IOMMU GA Log overflow\n");
+
+	iommu_feature_disable(iommu, CONTROL_GALOG_EN);
+
+	writel(MMIO_STATUS_GALOG_OVERFLOW_MASK,
+	       iommu->mmio_base + MMIO_STATUS_OFFSET);
+
+#ifdef CONFIG_IRQ_REMAP
+	iommu_poll_ga_log(iommu);
+#endif
+	iommu_feature_enable(iommu, CONTROL_GALOG_EN);
 }
 
 /*
@@ -904,7 +915,7 @@ static int iommu_ga_log_enable(struct amd_iommu *iommu)
 	if (!iommu->ga_log)
 		return -EINVAL;
 
-	entry = iommu_virt_to_phys(iommu->ga_log) | GA_LOG_SIZE_512;
+	entry = iommu_virt_to_phys(iommu->ga_log) | GA_LOG_SIZE_8192;
 	memcpy_toio(iommu->mmio_base + MMIO_GA_LOG_BASE_OFFSET,
 		    &entry, sizeof(entry));
 	entry = (iommu_virt_to_phys(iommu->ga_log_tail) &
@@ -1770,7 +1781,7 @@ static int __init init_iommu_one(struct amd_iommu *iommu, struct ivhd_header *h,
 	iommu->pci_seg = pci_seg;
 
 	raw_spin_lock_init(&iommu->lock);
-	atomic64_set(&iommu->cmd_sem_val, 0);
+	iommu->cmd_sem_val = 0;
 
 	/* Add IOMMU to internal data structures */
 	list_add_tail(&iommu->list, &amd_iommu_list);
@@ -2252,12 +2263,9 @@ static int iommu_setup_msi(struct amd_iommu *iommu)
 	if (r)
 		return r;
 
-	r = request_threaded_irq(iommu->dev->irq,
-				 amd_iommu_int_handler,
-				 amd_iommu_int_thread,
-				 0, "AMD-Vi",
+	r = request_threaded_irq(iommu->dev->irq, amd_iommu_int_handler,
+				 amd_iommu_int_thread, IRQF_ONESHOT, "AMD-Vi",
 				 iommu);
-
 	if (r) {
 		pci_disable_msi(iommu->dev);
 		return r;
@@ -2409,7 +2417,8 @@ static struct irq_domain *iommu_get_irqdomain(void)
 }
 
 static int __iommu_setup_intcapxt(struct amd_iommu *iommu, const char *devname,
-				  int hwirq, irq_handler_t thread_fn)
+				  int hwirq, irq_handler_t handler,
+				  irq_handler_t thread_fn)
 {
 	struct irq_domain *domain;
 	struct irq_alloc_info info;
@@ -2431,8 +2440,8 @@ static int __iommu_setup_intcapxt(struct amd_iommu *iommu, const char *devname,
 		return irq;
 	}
 
-	ret = request_threaded_irq(irq, amd_iommu_int_handler,
-				   thread_fn, 0, devname, iommu);
+	ret = request_threaded_irq(irq, handler, thread_fn, IRQF_ONESHOT,
+				   devname, iommu);
 	if (ret) {
 		irq_domain_free_irqs(irq, 1);
 		irq_domain_remove(domain);
@@ -2450,6 +2459,7 @@ static int iommu_setup_intcapxt(struct amd_iommu *iommu)
 		 "AMD-Vi%d-Evt", iommu->index);
 	ret = __iommu_setup_intcapxt(iommu, iommu->evt_irq_name,
 				     MMIO_INTCAPXT_EVT_OFFSET,
+				     NULL,
 				     amd_iommu_int_thread_evtlog);
 	if (ret)
 		return ret;
@@ -2458,6 +2468,7 @@ static int iommu_setup_intcapxt(struct amd_iommu *iommu)
 		 "AMD-Vi%d-PPR", iommu->index);
 	ret = __iommu_setup_intcapxt(iommu, iommu->ppr_irq_name,
 				     MMIO_INTCAPXT_PPR_OFFSET,
+				     NULL,
 				     amd_iommu_int_thread_pprlog);
 	if (ret)
 		return ret;
@@ -2467,6 +2478,7 @@ static int iommu_setup_intcapxt(struct amd_iommu *iommu)
 		 "AMD-Vi%d-GA", iommu->index);
 	ret = __iommu_setup_intcapxt(iommu, iommu->ga_irq_name,
 				     MMIO_INTCAPXT_GALOG_OFFSET,
+				     amd_iommu_int_handler,
 				     amd_iommu_int_thread_galog);
 #endif
 

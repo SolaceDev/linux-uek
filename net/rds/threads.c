@@ -335,6 +335,12 @@ static void rds_connect_worker(struct rds_conn_path *cp,
 		ret = conn->c_trans->conn_path_connect(cp);
 		if (ret)
 			rds_conn_path_drop(cp, DR_CONN_CONNECT_FAIL, ret);
+	} else if (!rds_conn_path_up(cp) && !rds_conn_path_connecting(cp)) {
+		pr_info("RDS/%s: connection <%pI6c,%pI6c,%d> connect_worker failed due to conn state '%s'\n",
+			(is_tcp ? "TCP" : "IB"),
+			&conn->c_laddr, &conn->c_faddr, conn->c_tos,
+			conn_state_mnem(atomic_read(&cp->cp_state)));
+		rds_conn_path_drop(cp, DR_INV_CONN_STATE, -ENOLINK);
 	}
 
 out:
@@ -355,7 +361,7 @@ void rds_send_worker(struct work_struct *work)
 	if (rds_conn_path_state(cp) == RDS_CONN_UP) {
 		rds_clear_queued_send_work_bit(cp);
 		clear_bit(RDS_LL_SEND_FULL, &cp->cp_flags);
-		ret = rds_send_xmit(cp);
+		ret = rds_send_xmit(cp, RDS_SEND_XMIT_MODE_WORKER);
 		cond_resched();
 		if (ret)
 			trace_rds_send_worker_err(NULL, cp->cp_conn, cp,
@@ -370,7 +376,7 @@ void rds_send_worker(struct work_struct *work)
 		case -ENOMEM:
 			rds_stats_inc(cp->cp_conn->c_stats,
 				      s_send_delayed_retry);
-			delay = 2;
+			delay = 1;
 			break;
 		default:
 			rds_conn_put(cp->cp_conn);

@@ -80,6 +80,7 @@ static const char * const sev_status_feat_names[] = {
 	[MSR_AMD64_SNP_IBS_VIRT_BIT]		= "IBSVirt",
 	[MSR_AMD64_SNP_VMSA_REG_PROT_BIT]	= "VMSARegProt",
 	[MSR_AMD64_SNP_SMT_PROT_BIT]		= "SMTProt",
+	[MSR_AMD64_SNP_IBPB_ON_ENTRY_BIT]	= "IBPBOnEntry",
 };
 
 /* For early boot hypervisor communication in SEV-ES enabled guests */
@@ -226,6 +227,9 @@ static noinstr struct ghcb *__sev_get_ghcb(struct ghcb_state *state)
 	struct ghcb *ghcb;
 
 	WARN_ON(!irqs_disabled());
+
+	if (!sev_cfg.ghcbs_initialized)
+		return boot_ghcb;
 
 	data = this_cpu_read(runtime_data);
 	ghcb = &data->ghcb_page;
@@ -622,6 +626,9 @@ static noinstr void __sev_put_ghcb(struct ghcb_state *state)
 	struct ghcb *ghcb;
 
 	WARN_ON(!irqs_disabled());
+
+	if (!sev_cfg.ghcbs_initialized)
+		return;
 
 	data = this_cpu_read(runtime_data);
 	ghcb = &data->ghcb_page;
