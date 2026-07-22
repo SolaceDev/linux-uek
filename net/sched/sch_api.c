@@ -26,6 +26,7 @@
 #include <linux/slab.h>
 #include <linux/hashtable.h>
 
+#include <net/netdev_lock.h>
 #include <net/net_namespace.h>
 #include <net/sock.h>
 #include <net/netlink.h>
@@ -1253,36 +1254,8 @@ static struct Qdisc *qdisc_create(struct net_device *dev,
 	struct qdisc_size_table *stab;
 
 	ops = qdisc_lookup_ops(kind);
-#ifdef CONFIG_MODULES
-	if (ops == NULL && kind != NULL) {
-		char name[IFNAMSIZ];
-		if (nla_strscpy(name, kind, IFNAMSIZ) >= 0) {
-			/* We dropped the RTNL semaphore in order to
-			 * perform the module load.  So, even if we
-			 * succeeded in loading the module we have to
-			 * tell the caller to replay the request.  We
-			 * indicate this using -EAGAIN.
-			 * We replay the request because the device may
-			 * go away in the mean time.
-			 */
-			rtnl_unlock();
-			request_module(NET_SCH_ALIAS_PREFIX "%s", name);
-			rtnl_lock();
-			ops = qdisc_lookup_ops(kind);
-			if (ops != NULL) {
-				/* We will try again qdisc_lookup_ops,
-				 * so don't keep a reference.
-				 */
-				module_put(ops->owner);
-				err = -EAGAIN;
-				goto err_out;
-			}
-		}
-	}
-#endif
-
-	err = -ENOENT;
 	if (!ops) {
+		err = -ENOENT;
 		NL_SET_ERR_MSG(extack, "Specified qdisc kind is unknown");
 		goto err_out;
 	}
@@ -1491,26 +1464,17 @@ const struct nla_policy rtm_tca_policy[TCA_MAX + 1] = {
  * Delete/get qdisc.
  */
 
-static int tc_get_qdisc(struct sk_buff *skb, struct nlmsghdr *n,
-			struct netlink_ext_ack *extack)
+static int __tc_get_qdisc(struct sk_buff *skb, struct nlmsghdr *n,
+			  struct netlink_ext_ack *extack,
+			  struct net_device *dev,
+			  struct nlattr *tca[TCA_MAX + 1],
+			  struct tcmsg *tcm)
 {
 	struct net *net = sock_net(skb->sk);
-	struct tcmsg *tcm = nlmsg_data(n);
-	struct nlattr *tca[TCA_MAX + 1];
-	struct net_device *dev;
-	u32 clid;
 	struct Qdisc *q = NULL;
 	struct Qdisc *p = NULL;
+	u32 clid;
 	int err;
-
-	err = nlmsg_parse_deprecated(n, sizeof(*tcm), tca, TCA_MAX,
-				     rtm_tca_policy, extack);
-	if (err < 0)
-		return err;
-
-	dev = __dev_get_by_index(net, tcm->tcm_ifindex);
-	if (!dev)
-		return -ENODEV;
 
 	clid = tcm->tcm_parent;
 	if (clid) {
@@ -1570,6 +1534,31 @@ static int tc_get_qdisc(struct sk_buff *skb, struct nlmsghdr *n,
 	return 0;
 }
 
+static int tc_get_qdisc(struct sk_buff *skb, struct nlmsghdr *n,
+			struct netlink_ext_ack *extack)
+{
+	struct net *net = sock_net(skb->sk);
+	struct tcmsg *tcm = nlmsg_data(n);
+	struct nlattr *tca[TCA_MAX + 1];
+	struct net_device *dev;
+	int err;
+
+	err = nlmsg_parse_deprecated(n, sizeof(*tcm), tca, TCA_MAX,
+				     rtm_tca_policy, extack);
+	if (err < 0)
+		return err;
+
+	dev = __dev_get_by_index(net, tcm->tcm_ifindex);
+	if (!dev)
+		return -ENODEV;
+
+	netdev_lock_ops(dev);
+	err = __tc_get_qdisc(skb, n, extack, dev, tca, tcm);
+	netdev_unlock_ops(dev);
+
+	return err;
+}
+
 static bool req_create_or_replace(struct nlmsghdr *n)
 {
 	return (n->nlmsg_flags & NLM_F_CREATE &&
@@ -1589,35 +1578,18 @@ static bool req_change(struct nlmsghdr *n)
 		!(n->nlmsg_flags & NLM_F_EXCL));
 }
 
-/*
- * Create/change qdisc.
- */
-static int tc_modify_qdisc(struct sk_buff *skb, struct nlmsghdr *n,
-			   struct netlink_ext_ack *extack)
+static int __tc_modify_qdisc(struct sk_buff *skb, struct nlmsghdr *n,
+			     struct netlink_ext_ack *extack,
+			     struct net_device *dev,
+			     struct nlattr *tca[TCA_MAX + 1],
+			     struct tcmsg *tcm)
 {
-	struct net *net = sock_net(skb->sk);
-	struct tcmsg *tcm;
-	struct nlattr *tca[TCA_MAX + 1];
-	struct net_device *dev;
+	struct Qdisc *q = NULL;
+	struct Qdisc *p = NULL;
 	u32 clid;
-	struct Qdisc *q, *p;
 	int err;
 
-replay:
-	/* Reinit, just in case something touches this. */
-	err = nlmsg_parse_deprecated(n, sizeof(*tcm), tca, TCA_MAX,
-				     rtm_tca_policy, extack);
-	if (err < 0)
-		return err;
-
-	tcm = nlmsg_data(n);
 	clid = tcm->tcm_parent;
-	q = p = NULL;
-
-	dev = __dev_get_by_index(net, tcm->tcm_ifindex);
-	if (!dev)
-		return -ENODEV;
-
 
 	if (clid) {
 		if (clid != TC_H_ROOT) {
@@ -1745,7 +1717,7 @@ replay:
 	}
 	err = qdisc_change(q, tca, extack);
 	if (err == 0)
-		qdisc_notify(net, skb, n, clid, NULL, q, extack);
+		qdisc_notify(sock_net(skb->sk), skb, n, clid, NULL, q, extack);
 	return err;
 
 create_n_graft:
@@ -1777,11 +1749,8 @@ create_n_graft2:
 				 tcm->tcm_parent, tcm->tcm_handle,
 				 tca, &err, extack);
 	}
-	if (q == NULL) {
-		if (err == -EAGAIN)
-			goto replay;
+	if (!q)
 		return err;
-	}
 
 graft:
 	err = qdisc_graft(dev, p, skb, n, clid, q, NULL, extack);
@@ -1792,6 +1761,58 @@ graft:
 	}
 
 	return 0;
+}
+
+static void request_qdisc_module(struct nlattr *kind)
+{
+	struct Qdisc_ops *ops;
+	char name[IFNAMSIZ];
+
+	if (!kind)
+		return;
+
+	ops = qdisc_lookup_ops(kind);
+	if (ops) {
+		module_put(ops->owner);
+		return;
+	}
+
+	if (nla_strscpy(name, kind, IFNAMSIZ) >= 0) {
+		rtnl_unlock();
+		request_module(NET_SCH_ALIAS_PREFIX "%s", name);
+		rtnl_lock();
+	}
+}
+
+/*
+ * Create/change qdisc.
+ */
+static int tc_modify_qdisc(struct sk_buff *skb, struct nlmsghdr *n,
+			   struct netlink_ext_ack *extack)
+{
+	struct net *net = sock_net(skb->sk);
+	struct nlattr *tca[TCA_MAX + 1];
+	struct net_device *dev;
+	struct tcmsg *tcm;
+	int err;
+
+	err = nlmsg_parse_deprecated(n, sizeof(*tcm), tca, TCA_MAX,
+				     rtm_tca_policy, extack);
+	if (err < 0)
+		return err;
+
+	request_qdisc_module(tca[TCA_KIND]);
+
+	tcm = nlmsg_data(n);
+	dev = __dev_get_by_index(net, tcm->tcm_ifindex);
+	if (!dev)
+		return -ENODEV;
+
+	netdev_lock_ops(dev);
+	err = __tc_modify_qdisc(skb, n, extack, dev, tca, tcm);
+	netdev_unlock_ops(dev);
+
+	return err;
 }
 
 static int tc_dump_qdisc_root(struct Qdisc *root, struct sk_buff *skb,
@@ -1878,17 +1899,23 @@ static int tc_dump_qdisc(struct sk_buff *skb, struct netlink_callback *cb)
 			s_q_idx = 0;
 		q_idx = 0;
 
+		netdev_lock_ops(dev);
 		if (tc_dump_qdisc_root(rtnl_dereference(dev->qdisc),
 				       skb, cb, &q_idx, s_q_idx,
-				       true, tca[TCA_DUMP_INVISIBLE]) < 0)
+				       true, tca[TCA_DUMP_INVISIBLE]) < 0) {
+			netdev_unlock_ops(dev);
 			goto done;
+		}
 
 		dev_queue = dev_ingress_queue(dev);
 		if (dev_queue &&
 		    tc_dump_qdisc_root(rtnl_dereference(dev_queue->qdisc_sleeping),
 				       skb, cb, &q_idx, s_q_idx, false,
-				       tca[TCA_DUMP_INVISIBLE]) < 0)
+				       tca[TCA_DUMP_INVISIBLE]) < 0) {
+			netdev_unlock_ops(dev);
 			goto done;
+		}
+		netdev_unlock_ops(dev);
 
 cont:
 		idx++;
@@ -2125,30 +2152,21 @@ static void tc_bind_tclass(struct Qdisc *q, u32 portid, u32 clid,
 
 #endif
 
-static int tc_ctl_tclass(struct sk_buff *skb, struct nlmsghdr *n,
-			 struct netlink_ext_ack *extack)
+static int __tc_ctl_tclass(struct sk_buff *skb, struct nlmsghdr *n,
+			   struct netlink_ext_ack *extack,
+			   struct net_device *dev,
+			   struct nlattr *tca[TCA_MAX + 1],
+			   struct tcmsg *tcm)
 {
 	struct net *net = sock_net(skb->sk);
-	struct tcmsg *tcm = nlmsg_data(n);
-	struct nlattr *tca[TCA_MAX + 1];
-	struct net_device *dev;
-	struct Qdisc *q = NULL;
 	const struct Qdisc_class_ops *cops;
+	struct Qdisc *q = NULL;
 	unsigned long cl = 0;
 	unsigned long new_cl;
 	u32 portid;
 	u32 clid;
 	u32 qid;
 	int err;
-
-	err = nlmsg_parse_deprecated(n, sizeof(*tcm), tca, TCA_MAX,
-				     rtm_tca_policy, extack);
-	if (err < 0)
-		return err;
-
-	dev = __dev_get_by_index(net, tcm->tcm_ifindex);
-	if (!dev)
-		return -ENODEV;
 
 	/*
 	   parent == TC_H_UNSPEC - unspecified parent.
@@ -2264,6 +2282,31 @@ out:
 	return err;
 }
 
+static int tc_ctl_tclass(struct sk_buff *skb, struct nlmsghdr *n,
+			 struct netlink_ext_ack *extack)
+{
+	struct net *net = sock_net(skb->sk);
+	struct tcmsg *tcm = nlmsg_data(n);
+	struct nlattr *tca[TCA_MAX + 1];
+	struct net_device *dev;
+	int err;
+
+	err = nlmsg_parse_deprecated(n, sizeof(*tcm), tca, TCA_MAX,
+				     rtm_tca_policy, extack);
+	if (err < 0)
+		return err;
+
+	dev = __dev_get_by_index(net, tcm->tcm_ifindex);
+	if (!dev)
+		return -ENODEV;
+
+	netdev_lock_ops(dev);
+	err = __tc_ctl_tclass(skb, n, extack, dev, tca, tcm);
+	netdev_unlock_ops(dev);
+
+	return err;
+}
+
 struct qdisc_dump_args {
 	struct qdisc_walker	w;
 	struct sk_buff		*skb;
@@ -2340,19 +2383,11 @@ static int tc_dump_tclass_root(struct Qdisc *root, struct sk_buff *skb,
 	return 0;
 }
 
-static int tc_dump_tclass(struct sk_buff *skb, struct netlink_callback *cb)
+static int __tc_dump_tclass(struct sk_buff *skb, struct netlink_callback *cb,
+			    struct tcmsg *tcm, struct net_device *dev)
 {
-	struct tcmsg *tcm = nlmsg_data(cb->nlh);
-	struct net *net = sock_net(skb->sk);
 	struct netdev_queue *dev_queue;
-	struct net_device *dev;
 	int t, s_t;
-
-	if (nlmsg_len(cb->nlh) < sizeof(*tcm))
-		return 0;
-	dev = dev_get_by_index(net, tcm->tcm_ifindex);
-	if (!dev)
-		return 0;
 
 	s_t = cb->args[0];
 	t = 0;
@@ -2370,8 +2405,30 @@ static int tc_dump_tclass(struct sk_buff *skb, struct netlink_callback *cb)
 done:
 	cb->args[0] = t;
 
-	dev_put(dev);
 	return skb->len;
+}
+
+static int tc_dump_tclass(struct sk_buff *skb, struct netlink_callback *cb)
+{
+	struct tcmsg *tcm = nlmsg_data(cb->nlh);
+	struct net *net = sock_net(skb->sk);
+	struct net_device *dev;
+	int err;
+
+	if (nlmsg_len(cb->nlh) < sizeof(*tcm))
+		return 0;
+
+	dev = dev_get_by_index(net, tcm->tcm_ifindex);
+	if (!dev)
+		return 0;
+
+	netdev_lock_ops(dev);
+	err = __tc_dump_tclass(skb, cb, tcm, dev);
+	netdev_unlock_ops(dev);
+
+	dev_put(dev);
+
+	return err;
 }
 
 #ifdef CONFIG_PROC_FS

@@ -31,7 +31,7 @@
 #define AMD_TIMEOUT_MAX_US	250
 #define AMD_MASTERCFG_MASK	GENMASK(15, 0)
 
-static void i2c_dw_configure_fifo_master(struct dw_i2c_dev *dev)
+void i2c_dw_configure_fifo_master(struct dw_i2c_dev *dev)
 {
 	/* Configure Tx/Rx FIFO threshold levels */
 	regmap_write(dev->map, DW_IC_TX_TL, dev->tx_fifo_depth / 2);
@@ -53,12 +53,12 @@ static int i2c_dw_issue_bus_clear(struct dw_i2c_dev *dev)
 	ic_enable | DW_IC_SDA_STUCK_RECOVERY_ENABLE);
 
 	/*
-	* Poll, waiting for recovery to be done. This may take up to 9 SCL
-	* clocks and a STOP bit, though presumably the device will signal
-	* completion in less time if it recovers sooner. There are apparently
-	* cases where the recovery doesn't finish, so we have a timeout
-	* in the loop.
-	*/
+	 * Poll, waiting for recovery to be done. This may take up to 9 SCL
+	 * clocks and a STOP bit, though presumably the device will signal
+	 * completion in less time if it recovers sooner. There are apparently
+	 * cases where the recovery doesn't finish, so we have a timeout
+	 * in the loop.
+	 */
 	timeout = jiffies + msecs_to_jiffies(50);
 	while (!time_after(jiffies, timeout)) {
 		regmap_read(dev->map, DW_IC_ENABLE, &ic_enable);
@@ -273,14 +273,21 @@ static int i2c_dw_init_master(struct dw_i2c_dev *dev)
 	return 0;
 }
 
-static void i2c_dw_xfer_init(struct dw_i2c_dev *dev)
+static int i2c_dw_xfer_init(struct dw_i2c_dev *dev)
 {
 	struct i2c_msg *msgs = dev->msgs;
 	u32 ic_con = 0, ic_tar = 0;
 	unsigned int dummy;
+	int ret;
 
-	/* Disable the adapter */
-	__i2c_dw_disable(dev);
+	if (dev->mctp_controller) {
+		ret = i2c_dw_set_mode(dev, DW_IC_MASTER);
+		if (ret)
+			return ret;
+	} else {
+		/* Disable the adapter */
+		__i2c_dw_disable(dev);
+	}
 
 	/* If the slave address is ten bit address, enable 10BITADDR */
 	if (msgs[dev->msg_write_idx].flags & I2C_M_TEN) {
@@ -316,6 +323,8 @@ static void i2c_dw_xfer_init(struct dw_i2c_dev *dev)
 	/* Clear and enable interrupts */
 	regmap_read(dev->map, DW_IC_CLR_INTR, &dummy);
 	__i2c_dw_write_intr_mask(dev, DW_IC_INTR_MASTER_MASK);
+
+	return 0;
 }
 
 /*
@@ -393,7 +402,9 @@ static int amd_i2c_dw_xfer_quirk(struct i2c_adapter *adap, struct i2c_msg *msgs,
 	dev->msgs = msgs;
 	dev->msgs_num = num_msgs;
 	dev->msg_write_idx = 0;
-	i2c_dw_xfer_init(dev);
+	status = i2c_dw_xfer_init(dev);
+	if (status)
+		return status;
 
 	/* Initiate messages read/write transaction */
 	for (msg_wrt_idx = 0; msg_wrt_idx < num_msgs; msg_wrt_idx++) {
@@ -770,7 +781,7 @@ tx_aborted:
  * Interrupt service routine. This gets called whenever an I2C master interrupt
  * occurs.
  */
-static irqreturn_t i2c_dw_isr(int this_irq, void *dev_id)
+irqreturn_t i2c_dw_isr(int this_irq, void *dev_id)
 {
 	struct dw_i2c_dev *dev = dev_id;
 	unsigned int stat, enabled;
@@ -832,8 +843,7 @@ static int i2c_dw_wait_transfer(struct dw_i2c_dev *dev)
 /*
  * Prepare controller for a transaction and call i2c_dw_xfer_msg.
  */
-static int
-i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
+int i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 {
 	struct dw_i2c_dev *dev = i2c_get_adapdata(adap);
 	int ret;
@@ -870,7 +880,9 @@ i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 		goto done;
 
 	/* Start the transfers */
-	i2c_dw_xfer_init(dev);
+	ret = i2c_dw_xfer_init(dev);
+	if (ret)
+		goto done;
 
 	/* Wait for tx to complete */
 	ret = i2c_dw_wait_transfer(dev);
@@ -878,6 +890,14 @@ i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 		dev_err(dev->dev, "controller timed out\n");
 		/* i2c_dw_init_master() implicitly disables the adapter */
 		i2c_recover_bus(&dev->adapter);
+		i2c_dw_init_master(dev);
+		goto done;
+	}
+
+	/* Look for a stuck bus */
+	if (dev->cmd_err == DW_IC_ERR_TX_ABRT &&
+		(dev->abort_source & DW_IC_TX_ABRT_SDA_STUCK_AT_LOW)) {
+		ret = i2c_dw_issue_bus_clear(dev);
 		i2c_dw_init_master(dev);
 		goto done;
 	}
@@ -891,14 +911,6 @@ i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	 */
 	if (i2c_dw_is_controller_active(dev))
 		dev_err(dev->dev, "controller active\n");
-
-	/* Look for a stuck bus */
-	if (dev->cmd_err == DW_IC_ERR_TX_ABRT &&
-		(dev->abort_source & DW_IC_TX_ABRT_SDA_STUCK_AT_LOW)) {
-		ret = i2c_dw_issue_bus_clear(dev);
-		i2c_dw_init_master(dev);
-		goto done;
-	}
 
 	/*
 	 * We must disable the adapter before returning and signaling the end
@@ -934,6 +946,8 @@ i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	ret = -EIO;
 
 done:
+	if (dev->mctp_controller && i2c_dw_set_mode(dev, DW_IC_SLAVE))
+		dev_err(dev->dev, "failed to restore slave mode after transfer\n");
 	i2c_dw_release_lock(dev);
 
 done_nolock:
@@ -946,6 +960,10 @@ done_nolock:
 static const struct i2c_algorithm i2c_dw_algo = {
 	.master_xfer = i2c_dw_xfer,
 	.functionality = i2c_dw_func,
+#if IS_ENABLED(CONFIG_I2C_DESIGNWARE_SLAVE)
+	.reg_slave = i2c_dw_reg_slave,
+	.unreg_slave = i2c_dw_unreg_slave,
+#endif
 };
 
 static const struct i2c_adapter_quirks i2c_dw_quirks = {
@@ -1036,7 +1054,7 @@ static int i2c_dw_init_recovery_info(struct dw_i2c_dev *dev)
 	gpio = devm_gpiod_get_optional(dev->dev, "scl", GPIOD_OUT_HIGH);
 	if (IS_ERR_OR_NULL(gpio)) {
 		if (IS_ERR(gpio))
-			return PTR_ERR(gpio);
+			return PTR_ERR_OR_ZERO(gpio);
 		return i2c_dw_probe_bus_clear_feature(dev);
 	}
 

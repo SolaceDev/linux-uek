@@ -9,6 +9,7 @@
 
 #include "giglio.dtsi"
 #include "elba-16core.dtsi"
+#include "elba-16core-spin-table.dtsi"
 #include "giglio-asic-common.dtsi"
 #include "elba-flash-parts.dtsi"
 #include "elba-asic-memory.dtsi"
@@ -16,7 +17,7 @@
 
 / {
 	model = "AMD Pensando Giglio Board";
-	compatible = "amd, pensando-giglio-ginestra", "amd,pensando-giglio";
+	compatible = "amd,pensando-giglio";
 
 	aliases {
 		serial0 = &uart0;

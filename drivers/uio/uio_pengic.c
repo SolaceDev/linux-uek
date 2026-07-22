@@ -27,10 +27,7 @@
 #include <linux/uio_driver.h>
 #include <linux/atomic.h>
 #include <linux/irqchip/irq-pensando.h>
-
-int pengic_probe(struct platform_device *pdev);
-int pengic_probe_enable(struct platform_device *pdev);
-void pengic_remove(struct platform_device *pdev);
+#include "uio_pengic.h"
 
 /* Probably should be defined in irq.h, but isn't */
 #define NO_IRQ		0
@@ -47,7 +44,7 @@ void pengic_remove(struct platform_device *pdev);
 #ifdef PRINT_HANDLER_STATUS
 #define handler_status(fmt, ...) pr_err(fmt, ##__VA_ARGS__)
 #else
-#define handler_status(fmt, ...) do { } while (false)
+#define handler_status(fmt, ...) no_printk(fmt, ##__VA_ARGS__)
 #endif
 
 /*
@@ -361,7 +358,7 @@ static int map_asic(struct uio_info *uio_info, struct device *dev,
 		 * Size of an area completely containing the device registers
 		 * of interest. Must be multiple of the page size
 		 */
-		unrounded_size = mem->offs + resource_size(res);
+		unrounded_size = mem->offs + resource_size(&res[i]);
 		rounded_size = (unrounded_size + (PAGE_SIZE - 1)) & PAGE_MASK;
 		mem->size = rounded_size;
 

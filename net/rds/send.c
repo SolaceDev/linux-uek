@@ -120,6 +120,9 @@ void rds_send_path_reset(struct rds_conn_path *cp)
 					struct rds_notifier *notifier;
 
 					notifier = rm->rdma.op_notifier;
+					if (notifier->n_conn) /* overwritten */
+						rds_conn_put(notifier->n_conn);
+					rds_conn_get(cp->cp_conn);
 					notifier->n_conn = cp->cp_conn;
 					if (test_bit(RDS_MSG_RETRANSMITTED,
 						&rm->m_flags) &&
@@ -137,6 +140,9 @@ void rds_send_path_reset(struct rds_conn_path *cp)
 			}
 			if (rm->data.op_active && rm->data.op_async) {
 				if (rm->data.op_notifier) {
+					if (rm->data.op_notifier->n_conn) /* overwritten */
+						rds_conn_put(rm->data.op_notifier->n_conn);
+					rds_conn_get(cp->cp_conn);
 					rm->data.op_notifier->n_conn =
 						cp->cp_conn;
 					if (!test_bit(RDS_MSG_FLUSH,
@@ -309,6 +315,7 @@ int rds_send_xmit(struct rds_conn_path *cp, enum rds_send_xmit_mode xmit_mode)
 			}
 			rm->data.op_active = 1;
 			rm->m_inc.i_conn_path = cp;
+			rds_conn_get(cp->cp_conn);
 			rm->m_inc.i_conn = cp->cp_conn;
 
 			cp->cp_xmit_rm = rm;
@@ -887,6 +894,9 @@ static inline void rds_q_or_free_notifier(struct rds_sock *rs,
 		list_add_tail(&notifier->n_list, &rs->rs_notify_queue);
 		spin_unlock(&rs->rs_lock);
 	} else {
+		if (notifier->n_conn)
+			/* get in rds_send_path_reset */
+			rds_conn_put(notifier->n_conn);
 		kfree(notifier);
 	}
 }
@@ -1239,6 +1249,7 @@ static int rds_send_queue_rm(struct rds_sock *rs, struct rds_connection *conn,
 			rds_stats_inc(rs->rs_stats, s_send_payload_csum_added);
 		}
 
+		rds_conn_get(conn);
 		rm->m_inc.i_conn = conn;
 		rm->m_inc.i_conn_path = cp;
 		rds_message_addref(rm);
@@ -1909,6 +1920,7 @@ static int rds_send_probe(struct rds_conn_path *cp, __be16 sport,
 	rm->m_inc.i_tx_lat = jiffies;
 	rds_set_rm_flag_bit(rm, RDS_MSG_ON_CONN);
 	rds_message_addref(rm);
+	rds_conn_get(cp->cp_conn);
 	rm->m_inc.i_conn = cp->cp_conn;
 	rm->m_inc.i_conn_path = cp;
 

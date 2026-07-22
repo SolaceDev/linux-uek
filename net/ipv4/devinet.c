@@ -292,7 +292,7 @@ static struct in_device *inetdev_init(struct net_device *dev)
 	if (!in_dev->arp_parms)
 		goto out_kfree;
 	if (IPV4_DEVCONF(in_dev->cnf, FORWARDING))
-		dev_disable_lro(dev);
+		netif_disable_lro(dev);
 	/* Reference in_dev->dev */
 	netdev_hold(dev, &in_dev->dev_tracker, GFP_KERNEL);
 	/* Account for reference dev->ip_ptr (below) */
@@ -2808,7 +2808,8 @@ void __init devinet_init(void)
 
 	queue_delayed_work(system_power_efficient_wq, &check_lifetime_work, 0);
 
-	rtnl_af_register(&inet_af_ops);
+	if (rtnl_af_register(&inet_af_ops))
+		panic("Unable to register inet_af_ops\n");
 
 	rtnl_register(PF_INET, RTM_NEWADDR, inet_rtm_newaddr, NULL, 0);
 	rtnl_register(PF_INET, RTM_DELADDR, inet_rtm_deladdr, NULL, 0);

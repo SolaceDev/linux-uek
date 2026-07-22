@@ -48,7 +48,7 @@ static DEFINE_SPINLOCK(xfrm_input_afinfo_lock);
 static struct xfrm_input_afinfo const __rcu *xfrm_input_afinfo[2][AF_INET6 + 1];
 
 static struct gro_cells gro_cells;
-static struct net_device xfrm_napi_dev;
+static struct net_device *xfrm_napi_dev;
 
 static DEFINE_PER_CPU(struct xfrm_trans_tasklet, xfrm_trans_tasklet);
 
@@ -638,18 +638,21 @@ lock:
 		XFRM_SKB_CB(skb)->seq.input.low = seq;
 		XFRM_SKB_CB(skb)->seq.input.hi = seq_hi;
 
-		dev_hold(skb->dev);
-
-		if (crypto_done)
+		if (crypto_done) {
 			nexthdr = x->type_offload->input_tail(x, skb);
-		else
+		} else {
+			dev_hold(skb->dev);
+
 			nexthdr = x->type->input(x, skb);
+			if (nexthdr == -EINPROGRESS) {
+				if (async)
+					dev_put(skb->dev);
+				return 0;
+			}
 
-		if (nexthdr == -EINPROGRESS)
-			return 0;
+			dev_put(skb->dev);
+		}
 resume:
-		dev_put(skb->dev);
-
 		spin_lock(&x->lock);
 		if (nexthdr < 0) {
 			if (nexthdr == -EBADMSG) {
@@ -716,6 +719,8 @@ resume:
 			sp->olen = 0;
 		if (skb_valid_dst(skb))
 			skb_dst_drop(skb);
+		if (async)
+			dev_put(skb->dev);
 		gro_cells_receive(&gro_cells, skb);
 		return 0;
 	} else {
@@ -735,6 +740,8 @@ resume:
 				sp->olen = 0;
 			if (skb_valid_dst(skb))
 				skb_dst_drop(skb);
+			if (async)
+				dev_put(skb->dev);
 			gro_cells_receive(&gro_cells, skb);
 			return err;
 		}
@@ -745,6 +752,8 @@ resume:
 drop_unlock:
 	spin_unlock(&x->lock);
 drop:
+	if (async)
+		dev_put(skb->dev);
 	xfrm_rcv_cb(skb, family, x && x->type ? x->type->proto : nexthdr, -1);
 	kfree_skb(skb);
 	return 0;
@@ -811,8 +820,11 @@ void __init xfrm_input_init(void)
 	int err;
 	int i;
 
-	init_dummy_netdev(&xfrm_napi_dev);
-	err = gro_cells_init(&gro_cells, &xfrm_napi_dev);
+	xfrm_napi_dev = alloc_netdev_dummy(0);
+	if (!xfrm_napi_dev)
+		panic("Failed to allocate XFRM dummy netdev\n");
+
+	err = gro_cells_init(&gro_cells, xfrm_napi_dev);
 	if (err)
 		gro_cells.cells = NULL;
 

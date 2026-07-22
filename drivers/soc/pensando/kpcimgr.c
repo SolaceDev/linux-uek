@@ -13,20 +13,35 @@
  * Copyright (c) 2021, 2022, Oracle and/or its affiliates.
  */
 
+#include <linux/vmalloc.h>
+#include <linux/moduleloader.h>
+#include <linux/execmem.h>
+#include <linux/msi.h>
 #include "kpcimgr_api.h"
 #include "penpcie_dev.h"
 
 MODULE_LICENSE("GPL");
 
-kstate_t *kstate;
+struct kpcimgr_state_t *kstate;
 DEFINE_SPINLOCK(kpcimgr_lock);
 static DECLARE_WAIT_QUEUE_HEAD(event_queue);
 
 void *kpci_memset(void *s, int c, size_t n);
-void kpcimgr_normal_poll(void);
-int contains_external_refs(struct module *mod, void *code_end);
-u64 kpcimgr_preg_read(u64 pa);
-unsigned long kpcimgr_get_entry(unsigned long old_entry, unsigned int cpu);
+static void kpcimgr_normal_poll(void);
+static int contains_external_refs(struct module *mod, void *code_end);
+static u64 kpcimgr_preg_read(u64 pa);
+static unsigned long __maybe_unused kpcimgr_get_entry(unsigned long old_entry,
+						      unsigned int cpu);
+
+static void *kpcimgr_exec_alloc(size_t size)
+{
+	return execmem_alloc(EXECMEM_MODULE_TEXT, size);
+}
+
+static void kpcimgr_exec_free(void *ptr)
+{
+	execmem_free(ptr);
+}
 
 void wake_up_event_queue(void)
 {
@@ -77,10 +92,10 @@ void *kpci_memcpy(void *dst, const void *src, size_t n)
 /*
  * Normal poll
  */
-void kpcimgr_normal_poll(void)
+static void kpcimgr_normal_poll(void)
 {
-	void (*poll_fn)(kstate_t *, int, int);
-	kstate_t *ks = get_kstate();
+	void (*poll_fn)(struct kpcimgr_state_t *ks, int mode, int state);
+	struct kpcimgr_state_t *ks = get_kstate();
 	unsigned long flags;
 
 	spin_lock_irqsave(&kpcimgr_lock, flags);
@@ -93,8 +108,8 @@ void kpcimgr_normal_poll(void)
 
 void kpcimgr_start_running(void)
 {
-	kstate_t *ks = get_kstate();
-	void (*init_fn)(kstate_t *ks);
+	struct kpcimgr_state_t *ks = get_kstate();
+	void (*init_fn)(struct kpcimgr_state_t *ks);
 	unsigned long flags;
 
 	spin_lock_irqsave(&kpcimgr_lock, flags);
@@ -108,7 +123,7 @@ void kpcimgr_start_running(void)
 
 void kpcimgr_stop_running(void)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 	void (*shut_fn)(int n);
 	unsigned long flags;
 
@@ -143,7 +158,7 @@ static ssize_t
 read_kpcimgr(struct file *file, char __user *buf, size_t nbytes, loff_t *ppos)
 {
 	static DEFINE_MUTEX(evq_lock);
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 	char localmem[EVENT_SIZE];
 	ssize_t n = 0;
 	int tail;
@@ -180,7 +195,7 @@ read_kpcimgr(struct file *file, char __user *buf, size_t nbytes, loff_t *ppos)
 static unsigned int
 poll_kpcimgr(struct file *file, poll_table *wait)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	poll_wait(file, &event_queue, wait);
 	if (ks->evq_head != ks->evq_tail)
@@ -194,7 +209,7 @@ static int mmap_kpcimgr(struct file *file, struct vm_area_struct *vma)
 	phys_addr_t offset = (phys_addr_t)vma->vm_pgoff << PAGE_SHIFT;
 	size_t size = vma->vm_end - vma->vm_start;
 	pgprot_t pgprot = vma->vm_page_prot;
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 	unsigned long pfn, start;
 	void *pos;
 
@@ -232,7 +247,7 @@ static int mmap_kpcimgr(struct file *file, struct vm_area_struct *vma)
  */
 static int open_kpcimgr(struct inode *inode, struct file *filp)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	if (ks->valid == KSTATE_MAGIC)
 		return 0;
@@ -245,7 +260,7 @@ static int open_kpcimgr(struct inode *inode, struct file *filp)
  * (ADRP) to memory addresses outside of the bounds of the module. If
  * any are found, report them and return an error.
  */
-int contains_external_refs(struct module *mod, void *code_end)
+static int contains_external_refs(struct module *mod, void *code_end)
 {
 	char code_loc[KSYM_SYMBOL_LEN], target_ref[KSYM_SYMBOL_LEN];
 	struct module_memory *mod_mem_core_text;
@@ -336,10 +351,10 @@ int kpcimgr_module_register(struct module *mod,
 {
 	struct module_memory *mod_mem_core_text;
 	void *code_end = ep->code_end;
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 	unsigned long start_addr, iflags;
-	void (*init_fn)(kstate_t *ks);
-	void (*version_fn)(char **);
+	void (*init_fn)(struct kpcimgr_state_t *ks);
+	void (*version_fn)(char **ver);
 	char *mod_buildtime;
 	int i, was_running, nentries;
 
@@ -382,12 +397,12 @@ int kpcimgr_module_register(struct module *mod,
 	}
 
 	if (ks->code_base)
-		execmem_free(ks->code_base);
+		kpcimgr_exec_free(ks->code_base);
 
 	if (relocate) {
-		ks->code_base = execmem_alloc(EXECMEM_MODULE_TEXT, mod_mem_core_text->size);
-
+		ks->code_base = kpcimgr_exec_alloc(mod_mem_core_text->size);
 		if (ks->code_base == NULL) {
+			spin_unlock_irqrestore(&kpcimgr_lock, iflags);
 			pr_err("KPCIMGR: module_alloc(%x)\n",
 			       mod_mem_core_text->size);
 			return -ENOMEM;
@@ -450,7 +465,7 @@ EXPORT_SYMBOL(kpcimgr_module_register);
 
 static void unmap_resources(void)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	int i;
 
@@ -479,7 +494,7 @@ static int map_resources(struct platform_device *pfdev)
 	struct device_node *dn = pfdev->dev.of_node;
 	u32 shmem_idx, hwmem_idx;
 	struct resource res;
-	kstate_t *ks;
+	struct kpcimgr_state_t *ks;
 	void *shmem;
 	int i, err;
 
@@ -505,10 +520,10 @@ static int map_resources(struct platform_device *pfdev)
 	if (res.start == 0) {
 		/* indicates no persistent memory */
 		pr_info("KPCIMGR: no persistent memory\n");
-		ks = vmalloc(sizeof(kstate_t));
+		ks = vmalloc(sizeof(struct kpcimgr_state_t));
 		if (ks == NULL)
 			return -ENOMEM;
-		memset((void *)ks, 0, sizeof(kstate_t));
+		memset((void *)ks, 0, sizeof(struct kpcimgr_state_t));
 		ks->active_port = -1;
 		ks->have_persistent_mem = 0;
 		shmem = vmalloc(resource_size(&res));
@@ -529,14 +544,14 @@ static int map_resources(struct platform_device *pfdev)
 			return -ENODEV;
 		}
 
-		ks = ioremap(res.start + SHMEM_KSTATE_OFFSET, sizeof(kstate_t));
+		ks = ioremap(res.start + SHMEM_KSTATE_OFFSET, sizeof(struct kpcimgr_state_t));
 		if (ks == NULL) {
 			pr_err("KPCIMGR: failed to map kstate\n");
 			iounmap(shmem);
 			return -ENOMEM;
 		}
 		if (ks->valid != KSTATE_MAGIC) {
-			kpci_memset((void *)ks, 0, sizeof(kstate_t));
+			kpci_memset((void *)ks, 0, sizeof(struct kpcimgr_state_t));
 			ks->active_port = -1;
 		}
 
@@ -554,7 +569,7 @@ static int map_resources(struct platform_device *pfdev)
 		}
 
 		if (ks->valid == KSTATE_MAGIC) {
-			ks->code_base = execmem_alloc(EXECMEM_MODULE_TEXT, ks->code_size);
+			ks->code_base = kpcimgr_exec_alloc(ks->code_size);
 			if (ks->code_base == NULL) {
 				pr_err("KPCIMGR: module_alloc(%lx) failed\n",
 				       ks->code_size);
@@ -613,8 +628,8 @@ static int map_resources(struct platform_device *pfdev)
  */
 static irqreturn_t kpcimgr_indirect_intr(int irq, void *arg)
 {
-	int (*intr_fn)(kstate_t *, int);
-	kstate_t *ks = (kstate_t *)arg;
+	int (*intr_fn)(struct kpcimgr_state_t *ks, int port);
+	struct kpcimgr_state_t *ks = (struct kpcimgr_state_t *)arg;
 	int port, r = 0;
 
 	spin_lock(&kpcimgr_lock);
@@ -637,8 +652,8 @@ static irqreturn_t kpcimgr_indirect_intr(int irq, void *arg)
  */
 static irqreturn_t kpcimgr_notify_intr(int irq, void *arg)
 {
-	int (*intr_fn)(kstate_t *, int);
-	kstate_t *ks = (kstate_t *)arg;
+	int (*intr_fn)(struct kpcimgr_state_t *ks, int port);
+	struct kpcimgr_state_t *ks = (struct kpcimgr_state_t *)arg;
 	int port, r = 0;
 
 	spin_lock(&kpcimgr_lock);
@@ -655,7 +670,7 @@ static irqreturn_t kpcimgr_notify_intr(int irq, void *arg)
 	return r ? IRQ_HANDLED : IRQ_NONE;
 }
 
-u64 kpcimgr_preg_read(u64 pa)
+static u64 kpcimgr_preg_read(u64 pa)
 {
 	u32 val;
 
@@ -665,7 +680,7 @@ u64 kpcimgr_preg_read(u64 pa)
 
 static u64 kpcimgr_upcall(int req, u64 arg1, u64 arg2, u64 arg3)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	if (ks->valid != KSTATE_MAGIC)		/* no code loaded */
 		return 1;
@@ -688,7 +703,7 @@ static u64 kpcimgr_upcall(int req, u64 arg1, u64 arg2, u64 arg3)
 
 static void set_msi_msg(struct msi_desc *desc, struct msi_msg *msg)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 	struct msi_info *msi = &ks->msi[desc->msi_index];
 
 	msi->msgaddr = ((u64)msg->address_hi << 32) | msg->address_lo;
@@ -697,7 +712,7 @@ static void set_msi_msg(struct msi_desc *desc, struct msi_msg *msg)
 
 static void free_intrs(struct platform_device *pfdev)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 	struct device *dev = &pfdev->dev;
 	struct msi_desc *desc;
 
@@ -719,7 +734,7 @@ static int alloc_intrs(struct platform_device *pfdev)
 {
 	irqreturn_t (*isr)(int irq, void *arg);
 	struct device *dev = &pfdev->dev;
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 	struct msi_desc *desc;
 	char *name;
 	int r;
@@ -749,7 +764,7 @@ static int kpcimgr_notify_reboot(struct notifier_block *this,
 				 unsigned long code,
 				 void *unused)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 	int was_running = ks->running;
 
 	/* stop running regardless of why a reboot is happening */
@@ -805,7 +820,7 @@ static struct miscdevice kpcimgr_dev = {
 
 static int kpcimgr_probe(struct platform_device *pfdev)
 {
-	kstate_t *ks;
+	struct kpcimgr_state_t *ks;
 	int err;
 
 	err = map_resources(pfdev);
@@ -881,11 +896,12 @@ builtin_platform_driver(kpcimgr_driver);
  * concurrently, but only one will be hijacked and the rest
  * will go to their default holding pens.
  */
-unsigned long kpcimgr_get_entry(unsigned long old_entry, unsigned int cpu)
+static unsigned long __maybe_unused kpcimgr_get_entry(unsigned long old_entry,
+						      unsigned int cpu)
 {
 	unsigned long (*entry_fn)(unsigned long entry, unsigned int cpu);
 	static DEFINE_SPINLOCK(choose_cpu_lock);
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 	unsigned long entry;
 
 	if (ks == NULL || ks->valid != KSTATE_MAGIC ||

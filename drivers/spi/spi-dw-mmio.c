@@ -62,7 +62,7 @@ struct dw_spi_mscc {
  *      |  cs1   cs1_ovr   cs0   cs0_ovr
  */
 #ifdef CONFIG_ARCH_PENSANDO_SALINA_SOC
-#define ELBA_SPICS_REG			0x66c
+#define ELBA_SPICS_REG			0x668
 #else
 #define ELBA_SPICS_REG			0x2468
 #endif

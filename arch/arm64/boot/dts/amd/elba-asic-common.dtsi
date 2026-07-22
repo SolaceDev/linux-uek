@@ -61,10 +61,19 @@
 &i2c0 {
 	clock-frequency = <100000>;
 	status = "okay";
+	temp-sensor@4c {
+		compatible = "ti,tmp451";
+		reg = <0x4c>;
+	};
 
 	rtc@51 {
 		compatible = "nxp,pcf85263";
 		reg = <0x51>;
+	};
+
+	regulator@62 {
+		compatible = "ti,tps53659";
+		reg = <0x62>;
 	};
 };
 

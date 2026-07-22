@@ -159,7 +159,7 @@
 		};
 
 		qspi: spi@90000 {
-			compatible = "pensando,elba-qspi";
+			compatible = "amd,pensando-elba-qspi", "cdns,qspi-nor";
 			#address-cells = <1>;
 			#size-cells = <0>;
 			reg = <0x0 0x90000 0x0 0x400>,
@@ -173,7 +173,7 @@
 		};
 
 		spi0: spi@b0000 {
-			compatible = "pensando,elba-spi";
+			compatible = "amd,pensando-elba-spi";
 			reg = <0x0 0xb0000 0x0 0x100>;
 			pensando,spics = <&mssoc 0x668 0>;
 			clocks = <&ahb_clk>;
@@ -185,7 +185,7 @@
 		};
 
 		spi1: spi@c0000 {
-			compatible = "pensando,elba-spi";
+			compatible = "amd,pensando-elba-spi";
 			reg = <0x0 0xc0000 0x0 0x100>;
 			pensando,spics = <&mssoc 0x66c 0>;
 			clocks = <&ahb_clk>;
@@ -300,7 +300,7 @@
 			reg = <0x0 0x61000000 0x0 0x80000>;
 		};
 
-		panic: panicdump {
+		panic: panicdump@0 {
 			compatible = "pensando,capri-crash";
 			status = "disabled";
 		};

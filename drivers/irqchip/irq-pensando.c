@@ -57,17 +57,10 @@
 #include <linux/spinlock.h>
 #include <linux/irqchip/irq-pensando.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
-#include <asm/stacktrace.h>
 
-void pen_irq_unmask_enable_csrintr(struct irq_data *irq_data);
-void pen_irq_eoi_csrintr(struct irq_data *irq_data);
-void pen_irq_eoi_grp(struct irq_data *irq_data);
-//void pen_irq_unmask_enable_csr(struct irq_data *irq_data);
-//void pen_irq_mask_disable_csr(struct irq_data *irq_data);
-//void pen_irq_eoi_csr(struct irq_data *irq_data);
-//void pen_irq_unmask_enable_grp(struct irq_data *irq_data);
-//void pen_irq_mask_disable_grp(struct irq_data *irq_data);
-//void pen_irq_mask_disable_csrintr(struct irq_data *irq_data);
+static void pen_irq_unmask_enable_csrintr(struct irq_data *irq_data);
+static void __maybe_unused pen_irq_eoi_csrintr(struct irq_data *irq_data);
+static void __maybe_unused pen_irq_eoi_grp(struct irq_data *irq_data);
 
 #ifndef CHAR_BIT
 #define CHAR_BIT	8
@@ -80,7 +73,7 @@ void pen_irq_eoi_grp(struct irq_data *irq_data);
 #define trace_irq_domain_ops(fmt, ...) pr_err("%s: " fmt, __func__, \
 	##__VA_ARGS__)
 #else
-#define trace_irq_domain_ops(fmt, ...) do { } while (false)
+#define trace_irq_domain_ops(fmt, ...) no_printk(fmt, ##__VA_ARGS__)
 #endif
 
 /* Maximum number of supported domains */
@@ -254,7 +247,6 @@ void pen_irq_mask_disable_grp_one(struct irq_data *irq_data)
 	hwirq = irq_data->hwirq;
 	domain = irq_data->domain;
 	info = domain->host_data;
-	info = domain->host_data;
 	data = info->map_base[0];
 
 	mask = BIT(hwirq);
@@ -274,7 +266,7 @@ static void pen_irq_mask_disable_grp(struct irq_data *irq_data)
 	irq_chip_mask_parent(irq_data);
 }
 
-void pen_irq_eoi_grp(struct irq_data *irq_data)
+static void __maybe_unused pen_irq_eoi_grp(struct irq_data *irq_data)
 {
 	struct irq_domain *domain;
 	struct pen_ictlr_info *info;
@@ -337,7 +329,7 @@ void pen_irq_unmask_enable_csrintr_one(struct irq_data *irq_data)
 }
 EXPORT_SYMBOL(pen_irq_unmask_enable_csrintr_one);
 
-void pen_irq_unmask_enable_csrintr(struct irq_data *irq_data)
+static void pen_irq_unmask_enable_csrintr(struct irq_data *irq_data)
 {
 	pen_irq_unmask_enable_csrintr_one(irq_data);
 	irq_chip_unmask_parent(irq_data);
@@ -382,7 +374,7 @@ static void pen_irq_mask_disable_csrintr(struct irq_data *irq_data)
 /*
  * We don't need to do any real work here, just report debugging info
  */
-void pen_irq_eoi_csrintr(struct irq_data *irq_data)
+static void __maybe_unused pen_irq_eoi_csrintr(struct irq_data *irq_data)
 {
 	struct irq_domain *domain;
 	struct pen_ictlr_info *info;
@@ -597,6 +589,8 @@ static int pen_irq_domain_alloc(struct irq_domain *d, unsigned int virq,
 
 	/* Set up the parent information */
 	rc = pen_get_parent_fwspec(d, &parent_fwspec);
+	if (rc)
+		return rc;
 	parent_fwspec.fwnode = d->parent->fwnode;
 
 	rc = irq_domain_alloc_irqs_parent(d, virq, nr_irqs, &parent_fwspec);
@@ -736,7 +730,7 @@ static struct pen_ictlr_info *__init pen_ictlr_probe(struct device_node *dn,
 	if (num_bases == 0) {
 		pr_err("no addresses found in reg property for %pOF\n",
 			dn);
-		return ERR_PTR(ENXIO);
+		return ERR_PTR(-ENXIO);
 	}
 
 	/* Allocate a struct pen_ictlr_info and add on space for the

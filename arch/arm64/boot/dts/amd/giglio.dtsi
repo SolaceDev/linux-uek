@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (c) 2019-2022, Pensando Systems Inc. */
+// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
+/*
+ * Copyright 2020-2022 Advanced Micro Devices, Inc.
+ */
 
 #include <dt-bindings/gpio/gpio.h>
 #include "dt-bindings/interrupt-controller/arm-gic.h"
+#include "dt-bindings/soc/pensando,capmem.h"
 
 / {
 	interrupt-parent = <&gic>;
@@ -57,11 +60,14 @@
 
 	rstcause {
 		compatible = "pensando,rstcause";
-		pensando,causeregs = <&mssoc 0x2084>;
+		pensando,causeregs = <&syscon 0x2084>;
 	};
 
 	capmem {
 		compatible = "pensando,capmem";
+		pensando,capmem-fixed-ranges =
+			<0x0 0x200000 0x0 0x6fe00000 DSC_MEM_ATTR_DEVICE>,
+			<0x4 0x0 0x0 0x400000 DSC_MEM_ATTR_DEVICE>;
 	};
 
 	soc: soc {
@@ -151,7 +157,7 @@
 		};
 
 		qspi: spi@2400 {
-			compatible = "pensando,elba-qspi";
+			compatible = "amd,pensando-elba-qspi", "cdns,qspi-nor";
 			#address-cells = <1>;
 			#size-cells = <0>;
 			reg = <0x0 0x2400 0x0 0x400>,
@@ -165,9 +171,9 @@
 		};
 
 		spi0: spi@2800 {
-			compatible = "pensando,elba-spi";
+			compatible = "amd,pensando-elba-spi";
 			reg = <0x0 0x2800 0x0 0x100>;
-			pensando,spics = <&mssoc 0x2468 0>;
+			amd,pensando-elba-syscon = <&syscon>;
 			clocks = <&ahb_clk>;
 			interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -177,9 +183,9 @@
 		};
 
 		spi1: spi@2c00 {
-			compatible = "pensando,elba-spi";
+			compatible = "amd,pensando-elba-spi";
 			reg = <0x0 0x2c00 0x0 0x100>;
-			pensando,spics = <&mssoc 0x2fd8 0>;
+			amd,pensando-elba-syscon = <&syscon>;
 			clocks = <&ahb_clk>;
 			interrupts = <GIC_SPI 8 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -327,7 +333,6 @@
 		pciemac@20102200 {
 			#address-cells = <2>;
 			#size-cells = <2>;
-			#interrupt-cells = <3>;
 
 			compatible = "pensando,uio_pciemac";
 			register-type = "csr-interrupt";
@@ -372,24 +377,35 @@
 			};
 		};
 
-		emmc: mmc@30440000 {
-			compatible = "pensando,elba-emmc", "cdns,sd4hc";
-			clocks = <&emmc_clk>;
+		emmc_int: interrupt-controller@30480120 {
+			compatible = "pensando,giglio-emmc-interrupt";
+			interrupt-controller;
+			reg = <0x0 0x30480120 0x0 0x40>;
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
 			interrupts = <GIC_SPI 16 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "emmc_int";
+		};
+
+		emmc: mmc@30440000 {
+			compatible = "amd,pensando-elba-sd4hc", "cdns,sd4hc";
 			reg = <0x0 0x30440000 0x0 0x10000
 			       0x0 0x30480044 0x0 0x4>;
+			clocks = <&emmc_clk>;
+			interrupts = <GIC_SPI 16 IRQ_TYPE_LEVEL_HIGH>;
 			cdns,phy-input-delay-sd-highspeed = <0x4>;
 			cdns,phy-input-delay-legacy = <0x4>;
 			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
 			cdns,phy-input-delay-sd-uhs-ddr50 = <0x16>;
+			mmc-ddr-1_8v;
 			cdns,phy-dll-delay-sdclk = <0>;
 			cdns,phy-dll-delay-sdclk-hsmmc = <0>;
 			cdns,mmc-ddr-1_8v;
 			status = "disabled";
 		};
 
-		mssoc: mssoc@307c0000 {
-			compatible = "pensando,mssoc", "syscon";
+		syscon: syscon@307c0000 {
+			compatible = "amd,pensando-elba-syscon", "syscon";
 			reg = <0x0 0x307c0000 0x0 0x3000>;
 		};
 
@@ -403,6 +419,17 @@
 			reg = <0x0 0x307c2480 0x0 0x4		/* MS CFG_WDT */
 			       0x0 0x1400 0x0 0x10		/* WDT0 */
 			       0x0 0x20000000 0x0 0x380000>;	/* PXB Base */
+		};
+
+		kpcimgr@20000000 {
+			compatible = "pensando,kpcimgr";
+			msi-parent = <&gic_its 0xf>;
+			shmem-index = <3>;
+			hwmem-index = <2>;
+			reg =  <0x0 0x20000000 0x0 0x00380000   /* PXB Base */
+				0x0 0x61800000 0x0 0x00101000   /* Interrupts */
+				0x0 0xc4000000 0x0 0x01000000   /* HWMEM */
+				0x0 0x0        0x0 0x02000000>; /* SHMEM */
 		};
 
 		/*

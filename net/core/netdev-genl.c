@@ -10,6 +10,7 @@
 #include <net/sock.h>
 #include <net/xdp.h>
 #include <net/xdp_sock.h>
+#include <net/page_pool/memory_provider.h>
 
 #include "dev.h"
 #include "devmem.h"
@@ -245,14 +246,21 @@ netdev_nl_napi_dump_one(struct net_device *netdev, struct sk_buff *rsp,
 			struct netdev_nl_dump_ctx *ctx)
 {
 	struct napi_struct *napi;
+	unsigned int prev_id;
 	int err = 0;
 
 	if (!(netdev->flags & IFF_UP))
 		return err;
 
+	prev_id = UINT_MAX;
 	list_for_each_entry(napi, &netdev->napi_list, dev_list) {
 		if (napi->napi_id < MIN_NAPI_ID)
 			continue;
+
+		/* Dump continuation below depends on the list being sorted */
+		WARN_ON_ONCE(napi->napi_id >= prev_id);
+		prev_id = napi->napi_id;
+
 		if (ctx->napi_id && napi->napi_id >= ctx->napi_id)
 			continue;
 
@@ -300,7 +308,7 @@ static int
 netdev_nl_queue_fill_one(struct sk_buff *rsp, struct net_device *netdev,
 			 u32 q_idx, u32 q_type, const struct genl_info *info)
 {
-	struct net_devmem_dmabuf_binding *binding;
+	struct pp_memory_provider_params *params;
 	struct netdev_rx_queue *rxq;
 	struct netdev_queue *txq;
 	void *hdr;
@@ -317,15 +325,15 @@ netdev_nl_queue_fill_one(struct sk_buff *rsp, struct net_device *netdev,
 	switch (q_type) {
 	case NETDEV_QUEUE_TYPE_RX:
 		rxq = __netif_get_rx_queue(netdev, q_idx);
+
 		if (rxq->napi && nla_put_u32(rsp, NETDEV_A_QUEUE_NAPI_ID,
 					     rxq->napi->napi_id))
 			goto nla_put_failure;
 
-		binding = rxq->mp_params.mp_priv;
-		if (binding &&
-		    nla_put_u32(rsp, NETDEV_A_QUEUE_DMABUF, binding->id))
+		params = &rxq->mp_params;
+		if (params->mp_ops &&
+		    params->mp_ops->nl_fill(params->mp_priv, rsp, rxq))
 			goto nla_put_failure;
-
 		break;
 	case NETDEV_QUEUE_TYPE_TX:
 		txq = netdev_get_tx_queue(netdev, q_idx);
@@ -768,8 +776,8 @@ int netdev_nl_bind_rx_doit(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nlattr *tb[ARRAY_SIZE(netdev_queue_id_nl_policy)];
 	struct net_devmem_dmabuf_binding *binding;
-	struct list_head *sock_binding_list;
 	u32 ifindex, dmabuf_fd, rxq_idx;
+	struct netdev_nl_sock *priv;
 	struct net_device *netdev;
 	struct sk_buff *rsp;
 	struct nlattr *attr;
@@ -784,10 +792,9 @@ int netdev_nl_bind_rx_doit(struct sk_buff *skb, struct genl_info *info)
 	ifindex = nla_get_u32(info->attrs[NETDEV_A_DEV_IFINDEX]);
 	dmabuf_fd = nla_get_u32(info->attrs[NETDEV_A_DMABUF_FD]);
 
-	sock_binding_list = genl_sk_priv_get(&netdev_nl_family,
-					     NETLINK_CB(skb).sk);
-	if (IS_ERR(sock_binding_list))
-		return PTR_ERR(sock_binding_list);
+	priv = genl_sk_priv_get(&netdev_nl_family, NETLINK_CB(skb).sk);
+	if (IS_ERR(priv))
+		return PTR_ERR(priv);
 
 	rsp = genlmsg_new(GENLMSG_DEFAULT_SIZE, GFP_KERNEL);
 	if (!rsp)
@@ -799,11 +806,21 @@ int netdev_nl_bind_rx_doit(struct sk_buff *skb, struct genl_info *info)
 		goto err_genlmsg_free;
 	}
 
-	rtnl_lock();
+	mutex_lock(&priv->lock);
 
-	netdev = __dev_get_by_index(genl_info_net(info), ifindex);
-	if (!netdev || !netif_device_present(netdev)) {
+	err = 0;
+	netdev = netdev_get_by_index_lock(genl_info_net(info), ifindex);
+	if (!netdev) {
 		err = -ENODEV;
+		goto err_unlock_sock;
+	}
+	if (!netif_device_present(netdev))
+		err = -ENODEV;
+	else if (!netdev_need_ops_lock(netdev))
+		err = -EOPNOTSUPP;
+	if (err) {
+		NL_SET_BAD_ATTR(info->extack,
+				info->attrs[NETDEV_A_DEV_IFINDEX]);
 		goto err_unlock;
 	}
 
@@ -848,7 +865,7 @@ int netdev_nl_bind_rx_doit(struct sk_buff *skb, struct genl_info *info)
 			goto err_unbind;
 	}
 
-	list_add(&binding->list, sock_binding_list);
+	list_add(&binding->list, &priv->bindings);
 
 	nla_put_u32(rsp, NETDEV_A_DMABUF_ID, binding->id);
 	genlmsg_end(rsp, hdr);
@@ -857,34 +874,54 @@ int netdev_nl_bind_rx_doit(struct sk_buff *skb, struct genl_info *info)
 	if (err)
 		goto err_unbind;
 
-	rtnl_unlock();
+	netdev_unlock(netdev);
+
+	mutex_unlock(&priv->lock);
 
 	return 0;
 
 err_unbind:
 	net_devmem_unbind_dmabuf(binding);
 err_unlock:
-	rtnl_unlock();
+	netdev_unlock(netdev);
+err_unlock_sock:
+	mutex_unlock(&priv->lock);
 err_genlmsg_free:
 	nlmsg_free(rsp);
 	return err;
 }
 
-void netdev_nl_sock_priv_init(struct list_head *priv)
+void netdev_nl_sock_priv_init(struct netdev_nl_sock *priv)
 {
-	INIT_LIST_HEAD(priv);
+	INIT_LIST_HEAD(&priv->bindings);
+	mutex_init(&priv->lock);
 }
 
-void netdev_nl_sock_priv_destroy(struct list_head *priv)
+void netdev_nl_sock_priv_destroy(struct netdev_nl_sock *priv)
 {
 	struct net_devmem_dmabuf_binding *binding;
 	struct net_devmem_dmabuf_binding *temp;
+	netdevice_tracker dev_tracker;
+	struct net_device *dev;
 
-	list_for_each_entry_safe(binding, temp, priv, list) {
-		rtnl_lock();
+	mutex_lock(&priv->lock);
+	list_for_each_entry_safe(binding, temp, &priv->bindings, list) {
+		mutex_lock(&binding->lock);
+		dev = binding->dev;
+		if (!dev) {
+			mutex_unlock(&binding->lock);
+			net_devmem_unbind_dmabuf(binding);
+			continue;
+		}
+		netdev_hold(dev, &dev_tracker, GFP_KERNEL);
+		mutex_unlock(&binding->lock);
+
+		netdev_lock(dev);
 		net_devmem_unbind_dmabuf(binding);
-		rtnl_unlock();
+		netdev_unlock(dev);
+		netdev_put(dev, &dev_tracker);
 	}
+	mutex_unlock(&priv->lock);
 }
 
 static int netdev_genl_netdevice_event(struct notifier_block *nb,

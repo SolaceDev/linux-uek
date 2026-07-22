@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2022, Pensando Systems Inc.
  */
@@ -223,12 +224,11 @@ static int sbus_probe(struct platform_device *pdev)
 			pr_err("Cannot allocate major number\n");
 			return -1;
 		}
-		pr_debug("Major = %d Minor = %d \n", MAJOR(sbus_dev),
-			MINOR(sbus_dev));
+		pr_debug("Major = %d Minor = %d\n", MAJOR(sbus_dev), MINOR(sbus_dev));
 
 		/* Creating struct class */
 		dev_class = class_create("sbus_class");
-		if (dev_class == NULL) {
+		if (IS_ERR(dev_class)) {
 			pr_err("Cannot create the struct class\n");
 			goto r_class;
 		}
@@ -249,15 +249,17 @@ static int sbus_probe(struct platform_device *pdev)
 	}
 
 	/* Creating device */
-	if ((device_create(dev_class, NULL, device, NULL, "sbus%d",
-					sbus_ring_num)) == NULL) {
+	if (IS_ERR(device_create(dev_class, NULL, device, NULL, "sbus%d",
+				 sbus_ring_num))) {
 		pr_err("Cannot create the Device 1\n");
-		goto r_device;
+		goto r_cdev;
 	}
 	dev_inst++;
 
 	return 0;
 
+r_cdev:
+	cdev_del(&sbus_ring->cdev);
 r_device:
 	if (dev_inst == 0)
 		class_destroy(dev_class);

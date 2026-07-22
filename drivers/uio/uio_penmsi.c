@@ -35,9 +35,7 @@
 #include <linux/slab.h>
 #include <linux/uio_driver.h>
 #include <linux/wait.h>
-
-int penmsi_probe(struct platform_device *pdev);
-void penmsi_remove(struct platform_device *pdev);
+#include "uio_penmsi.h"
 
 /* Optionally add attributes */
 #define ADD_ATTRS
@@ -509,8 +507,8 @@ int penmsi_probe(struct platform_device *pdev)
 	init_platdata = platdata;
 
 	/* Kick off work that should result in calling the callback */
-	rc = platform_device_msi_init_and_alloc_irqs(&pdev->dev, num_interrupts,
-		penmsi_callback);
+	rc = platform_device_msi_init_and_alloc_irqs(&pdev->dev,
+						     num_interrupts, penmsi_callback);
 	if (rc != 0) {
 		dev_err(&pdev->dev,
 			"platform_device_msi_init_and_alloc_irqs failed: %d\n", rc);

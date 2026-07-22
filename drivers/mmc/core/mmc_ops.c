@@ -510,8 +510,6 @@ int __mmc_poll_for_busy(struct mmc_host *host, unsigned int period_us,
 	int err;
 	unsigned long timeout, timeout_hpi;
 	unsigned int udelay = period_us ? period_us : 32, udelay_max = 32768;
-	struct mmc_busy_data *data = cb_data;
-	struct mmc_card *card = data->card;
 	bool hpi_expired = false;
 	bool hpi_sent = false;
 	bool expired = false;
@@ -538,16 +536,21 @@ int __mmc_poll_for_busy(struct mmc_host *host, unsigned int period_us,
 			return err;
 
 		hpi_expired = time_after(jiffies, timeout_hpi);
-		if (!hpi_sent && card->ext_csd.hpi_en && hpi_expired && busy &&
-		    data->busy_cmd == MMC_BUSY_CMD6) {
-			err = mmc_send_hpi_cmd(card);
-			if (err) {
-				pr_err("%s: HPI to interrupt cache flush failed %d\n",
-				       mmc_hostname(host), err);
-			} else {
-				pr_info("%s: HPI sent to interrupt cache flush\n",
-					mmc_hostname(host));
-				hpi_sent = true;
+		if (!hpi_sent && busy_cb == mmc_busy_cb && hpi_expired && busy) {
+			struct mmc_busy_data *data = cb_data;
+			struct mmc_card *card = data ? data->card : NULL;
+
+			if (card && card->ext_csd.hpi_en &&
+			    data->busy_cmd == MMC_BUSY_CMD6) {
+				err = mmc_send_hpi_cmd(card);
+				if (err) {
+					pr_err("%s: HPI to interrupt cache flush failed %d\n",
+					       mmc_hostname(host), err);
+				} else {
+					pr_info("%s: HPI sent to interrupt cache flush\n",
+						mmc_hostname(host));
+					hpi_sent = true;
+				}
 			}
 		}
 

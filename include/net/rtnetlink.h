@@ -4,6 +4,7 @@
 
 #include <linux/uek_kabi.h>
 #include <linux/rtnetlink.h>
+#include <linux/srcu.h>
 #include <net/netlink.h>
 
 typedef int (*rtnl_doit_func)(struct sk_buff *, struct nlmsghdr *,
@@ -65,7 +66,8 @@ static inline int rtnl_msg_family(const struct nlmsghdr *nlh)
 /**
  *	struct rtnl_link_ops - rtnetlink link operations
  *
- *	@list: Used internally
+ *	@list: Used internally, protected by RTNL and SRCU
+ *	@srcu: Used internally
  *	@kind: Identifier
  *	@netns_refund: Physical device, move to init_net on netns exit
  *	@maxtype: Highest device specific netlink attribute number
@@ -154,10 +156,14 @@ struct rtnl_link_ops {
 	int			(*fill_linkxstats)(struct sk_buff *skb,
 						   const struct net_device *dev,
 						   int *prividx, int attr);
-
+#ifdef __GENKSYMS__
 	UEK_KABI_RESERVE(1)
 	UEK_KABI_RESERVE(2)
 	UEK_KABI_RESERVE(3)
+#else
+	/* the size of srcu_struct is 24 bytes in UEK8-U2 */
+	struct srcu_struct	srcu;
+#endif
 	UEK_KABI_RESERVE(4)
 	UEK_KABI_RESERVE(5)
 	UEK_KABI_RESERVE(6)
@@ -174,7 +180,8 @@ void rtnl_link_unregister(struct rtnl_link_ops *ops);
 /**
  * 	struct rtnl_af_ops - rtnetlink address family operations
  *
- *	@list: Used internally
+ *	@list: Used internally, protected by RTNL and SRCU
+ *	@srcu: Used internally
  * 	@family: Address family
  * 	@fill_link_af: Function to fill IFLA_AF_SPEC with address family
  * 		       specific netlink attributes.
@@ -187,6 +194,8 @@ void rtnl_link_unregister(struct rtnl_link_ops *ops);
  */
 struct rtnl_af_ops {
 	struct list_head	list;
+	struct srcu_struct	srcu;
+
 	int			family;
 
 	int			(*fill_link_af)(struct sk_buff *skb,
@@ -206,7 +215,7 @@ struct rtnl_af_ops {
 	size_t			(*get_stats_af_size)(const struct net_device *dev);
 };
 
-void rtnl_af_register(struct rtnl_af_ops *ops);
+int rtnl_af_register(struct rtnl_af_ops *ops);
 void rtnl_af_unregister(struct rtnl_af_ops *ops);
 
 struct net *rtnl_link_get_net(struct net *src_net, struct nlattr *tb[]);

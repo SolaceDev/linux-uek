@@ -41,6 +41,7 @@
 #include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/syscore_ops.h>
+#include <linux/uaccess.h>
 #include <xen/xen.h>
 #include <xen/xenbus.h>
 #include <xen/interface/io/protocols.h>
@@ -71,6 +72,16 @@ module_param(debug_level, int, S_IRUGO|S_IWUSR);
 
 #define OVMLOG(lvl, msg, args...) ovmapi_debug_out(lvl, msg, ## args);
 
+static void ovmapi_free_events(struct ovmapi_app_entry *app)
+{
+	struct ovmapi_event_list *event, *next;
+
+	list_for_each_entry_safe(event, next, &app->events_list, list) {
+		list_del(&event->list);
+		kmem_cache_free(event_cache, event);
+	}
+}
+
 static int ovmapi_open(struct inode *inode, struct file *file)
 {
 	struct ovmapi_app_entry *app;
@@ -97,7 +108,11 @@ static int ovmapi_release(struct inode *inode, struct file *file)
 	struct ovmapi_app_entry *app = file->private_data;
 
 	mutex_lock(&ovmapi_info.apps_list_mutex);
-	list_del(&app->list);
+	if (app->registered) {
+		app->registered = false;
+		list_del_init(&app->list);
+	}
+	ovmapi_free_events(app);
 	mutex_unlock(&ovmapi_info.apps_list_mutex);
 	kfree(app);
 
@@ -137,6 +152,10 @@ static int ovmapi_register_app(struct ovmapi_information *p_ovmapi_info,
 			       struct ovmapi_app_entry *app)
 {
 	mutex_lock(&p_ovmapi_info->apps_list_mutex);
+	if (app->registered) {
+		mutex_unlock(&p_ovmapi_info->apps_list_mutex);
+		return -EALREADY;
+	}
 	app->registered = true;
 	list_add_tail(&app->list, &p_ovmapi_info->registered_apps_list);
 	mutex_unlock(&p_ovmapi_info->apps_list_mutex);
@@ -147,14 +166,12 @@ static int ovmapi_register_app(struct ovmapi_information *p_ovmapi_info,
 static int ovmapi_unregister_app(struct ovmapi_information *p_ovmapi_info,
 				 struct ovmapi_app_entry *app)
 {
-	struct ovmapi_event_list *event, *next;
-
 	mutex_lock(&p_ovmapi_info->apps_list_mutex);
-	app->registered = false;
-	list_for_each_entry_safe(event, next, &app->events_list, list) {
-		list_del(&event->list);
-		kmem_cache_free(event_cache, event);
+	if (app->registered) {
+		app->registered = false;
+		list_del_init(&app->list);
 	}
+	ovmapi_free_events(app);
 	mutex_unlock(&p_ovmapi_info->apps_list_mutex);
 	wake_up(&app->event_waitqueue);
 	if (app->async_queue)
@@ -326,6 +343,26 @@ static int ovmapi_delete_events(struct ovmapi_information *p_ovmapi_info,
 	return 0;
 }
 
+static int ovmapi_copy_event_to_user(void __user *user_event,
+				     const struct ovmapi_event_list *event)
+{
+	size_t size;
+
+	if (event->event_entry.header.size > OVMAPI_EVENT_DATA_MAXSIZE)
+		return -EINVAL;
+
+	if (event->event_entry.header.type == OVMAPI_EVT_MORE_PROCESSING &&
+		       event->event_entry.header.size < sizeof(unsigned long))
+		return -EINVAL;
+
+	size = sizeof(struct ovmapi_event_header) +
+	       event->event_entry.header.size;
+	if (copy_to_user(user_event, &event->event_entry, size))
+		return -EFAULT;
+
+	return 0;
+}
+
 static int ovmapi_post_event(struct ovmapi_information *p_ovmapi_info,
 			     struct ovmapi_app_entry *source_app,
 			     void __user *user_buffer)
@@ -353,6 +390,12 @@ static int ovmapi_post_event(struct ovmapi_information *p_ovmapi_info,
 			mutex_unlock(&p_ovmapi_info->apps_list_mutex);
 			return -EFAULT;
 		}
+		if (add_event->event_entry.header.size > OVMAPI_EVENT_DATA_MAXSIZE) {
+			kmem_cache_free(event_cache, add_event);
+			mutex_unlock(&p_ovmapi_info->apps_list_mutex);
+			return -EINVAL;
+		}
+
 		if (!(app->event_mask & add_event->event_entry.header.type)) {
 			kmem_cache_free(event_cache, add_event);
 			continue;
@@ -429,6 +472,7 @@ static int ovmapi_get_event(struct ovmapi_information *p_ovmapi_info,
 	struct ovmapi_event_header kernel_mem_event;
 	struct ovmapi_event *user_mem_event =
 				(struct ovmapi_event *)user_buffer;
+	int ret;
 
 	/* We should only have a valid header from the user. */
 	if (copy_from_user(&kernel_mem_event, user_mem_event,
@@ -439,11 +483,10 @@ static int ovmapi_get_event(struct ovmapi_information *p_ovmapi_info,
 	list_for_each_entry_safe(event, tmp, &app->events_list, list) {
 		if (kernel_mem_event.event_id ==
 			event->event_entry.header.event_id) {
-			if (copy_to_user(user_mem_event, &event->event_entry,
-					 (sizeof(struct ovmapi_event_header) +
-					 event->event_entry.header.size))) {
+			ret = ovmapi_copy_event_to_user(user_mem_event, event);
+			if (ret) {
 				mutex_unlock(&p_ovmapi_info->apps_list_mutex);
-				return -EFAULT;
+				return ret;
 			}
 			list_del(&event->list);
 			kmem_cache_free(event_cache, event);
@@ -461,26 +504,30 @@ static int ovmapi_get_next_event(struct ovmapi_information *p_ovmapi_info,
 				 void __user *user_buffer)
 {
 	struct ovmapi_event_list *event = NULL;
-	struct ovmapi_event *user_mem_event =
-				(struct ovmapi_event *)user_buffer;
+	struct ovmapi_event __user *user_mem_event = user_buffer;
+	int ret;
 
 	mutex_lock(&p_ovmapi_info->apps_list_mutex);
 	if (!list_empty(&app->events_list)) {
 		event = list_entry(app->events_list.next,
 				   struct ovmapi_event_list,
 				   list);
-		if (copy_to_user(user_mem_event, &event->event_entry,
-				 (sizeof(struct ovmapi_event_header) +
-				 event->event_entry.header.size))){
+		ret = ovmapi_copy_event_to_user(user_mem_event, event);
+		if (ret) {
 			mutex_unlock(&p_ovmapi_info->apps_list_mutex);
-			return -EFAULT;
+			return ret;
 		}
-		if (user_mem_event->header.type ==
-			OVMAPI_EVT_MORE_PROCESSING) {
-			struct ovmapi_event_more_processing *emp =
-				(struct ovmapi_event_more_processing *)
-				user_mem_event;
-			emp->event_mask = app->event_mask;
+		if (event->event_entry.header.type == OVMAPI_EVT_MORE_PROCESSING) {
+			unsigned long __user *event_mask =
+				(unsigned long __user *)
+				((char __user *)user_buffer +
+				 offsetof(struct ovmapi_event_more_processing,
+					  event_mask));
+
+			if (put_user(app->event_mask, event_mask)) {
+				mutex_unlock(&p_ovmapi_info->apps_list_mutex);
+				return -EFAULT;
+			}
 		}
 		list_del(&event->list);
 		kmem_cache_free(event_cache, event);
@@ -777,7 +824,8 @@ static int ovmapi_send_dom0_message(struct ovmapi_information *p_ovmapi_info,
 
 	xenbus_write(XBT_NIL, pathname, "", name);
 
-	for (n = 0; n <= (value_len / OVMM_MAX_CHARS_PER_SEQUENCE); n++) {
+	for (n = 0; n < DIV_ROUND_UP(value_len,
+				      OVMM_MAX_CHARS_PER_SEQUENCE); n++) {
 		snprintf(number, sizeof(number), "%ld", n);
 		save = '\0';
 		if (value_len > ((n + 1) * OVMM_MAX_CHARS_PER_SEQUENCE)) {
@@ -981,7 +1029,7 @@ static long ovmapi_ioctl(struct file *file, unsigned int cmd,
 		name  = kmem_cache_alloc(name_cache,  GFP_KERNEL);
 		if (!name)
 			return -ENOMEM;
-		value = kmalloc(message.value_size, GFP_KERNEL);
+		value = kzalloc(message.value_size + 1, GFP_KERNEL);
 		if (!value) {
 			status = -ENOMEM;
 			goto out;

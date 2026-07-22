@@ -645,7 +645,6 @@ static const struct file_operations elbasr_spi_fops = {
 	.compat_ioctl = elbasr_spi_compat_ioctl,
 	.open =		elbasr_spi_open,
 	.release =	elbasr_spi_release,
-	.llseek =	no_llseek,
 };
 
 static bool
@@ -733,6 +732,8 @@ static const struct regmap_config pensando_elbasr_regmap_config = {
 static int
 elbasr_regs_setup(struct spi_device *spi, struct elbasr_data *elbasr)
 {
+	struct device_node *rtc_np;
+	unsigned int n_subdevs;
 	int ret;
 
 	spi->bits_per_word = 8;
@@ -747,9 +748,22 @@ elbasr_regs_setup(struct spi_device *spi, struct elbasr_data *elbasr)
 		return ret;
 	}
 
+	/*
+	 * The RTC is only present on cards that route an FPGA RTC through the
+	 * CPLD, indicated by a "amd,pensando-elbasr-rtc" child node. It is the
+	 * last entry in pensando_elbasr_subdev_info, so drop it from the count
+	 * when the node is absent to avoid registering an unbacked sub-device.
+	 */
+	n_subdevs = ARRAY_SIZE(pensando_elbasr_subdev_info);
+	rtc_np = of_get_compatible_child(spi->dev.of_node,
+					 "amd,pensando-elbasr-rtc");
+	if (rtc_np)
+		of_node_put(rtc_np);
+	else
+		n_subdevs--;
+
 	ret = devm_mfd_add_devices(&spi->dev, PLATFORM_DEVID_NONE,
-				   pensando_elbasr_subdev_info,
-				   ARRAY_SIZE(pensando_elbasr_subdev_info),
+				   pensando_elbasr_subdev_info, n_subdevs,
 				   NULL, 0, NULL);
 	if (ret)
 		dev_err(&spi->dev, "Failed to register sub-devices: %d\n", ret);
@@ -798,12 +812,21 @@ static int elbasr_spi_probe(struct spi_device *spi)
 		struct device *dev;
 
 		elbasr->devt = MKDEV(MAJOR(elbasr_devt), minor);
+
+		/*
+		 * Force bus number to 0 so that the device nodes are always
+		 * /dev/spidev0.x regardless of the physical SPI controller
+		 * bus number (which can be 3 on Salina due to the CPLD mux).
+		 *
+		 * This keeps userspace tools (cpldapp, etc.) unchanged and
+		 * matches the legacy Elba behavior.
+		 */
 		dev = device_create(elbasr_class,
 				    &spi->dev,
 				    elbasr->devt,
 				    elbasr,
 				    "spidev%d.%d",
-				    spi->master->bus_num,
+				    0,
 				    spi_get_chipselect(spi, 0));
 
 		status = PTR_ERR_OR_ZERO(dev);
@@ -839,8 +862,11 @@ static int elbasr_spi_probe(struct spi_device *spi)
 	spi_set_drvdata(spi, elbasr);
 
 	/* Add Elba reset driver sub-device */
-	if (spi_get_chipselect(spi, 0) == 0)
-		elbasr_regs_setup(spi, elbasr);
+	if (spi_get_chipselect(spi, 0) == 0) {
+		status = elbasr_regs_setup(spi, elbasr);
+		if (status)
+			goto cdev_delete;
+	}
 
 	return 0;
 
@@ -861,8 +887,15 @@ static const struct of_device_id elbasr_spi_of_match[] = {
 	{ /* sentinel */ },
 };
 
+static const struct spi_device_id elbasr_spi_ids[] = {
+	{ "pensando-elbasr" },
+	{ /* sentinel */ },
+};
+MODULE_DEVICE_TABLE(spi, elbasr_spi_ids);
+
 static struct spi_driver elbasr_spi_driver = {
 	.probe = elbasr_spi_probe,
+	.id_table = elbasr_spi_ids,
 	.driver = {
 		.name = "elbasr",
 		.of_match_table = of_match_ptr(elbasr_spi_of_match),

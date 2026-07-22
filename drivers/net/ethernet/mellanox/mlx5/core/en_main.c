@@ -232,13 +232,17 @@ static int mlx5e_devcom_event_mpv(int event, void *my_data, void *event_data)
 
 static int mlx5e_devcom_init_mpv(struct mlx5e_priv *priv, u64 *data)
 {
+	struct mlx5_devcom_match_attr attr = {
+		.key.val = *data,
+	};
+
 	priv->devcom = mlx5_devcom_register_component(priv->mdev->priv.devc,
 						      MLX5_DEVCOM_MPV,
-						      *data,
+						      &attr,
 						      mlx5e_devcom_event_mpv,
 						      priv);
-	if (IS_ERR(priv->devcom))
-		return PTR_ERR(priv->devcom);
+	if (!priv->devcom)
+		return -EINVAL;
 
 	if (mlx5_core_is_mp_master(priv->mdev)) {
 		mlx5_devcom_send_event(priv->devcom, MPV_DEVCOM_MASTER_UP,
@@ -251,7 +255,7 @@ static int mlx5e_devcom_init_mpv(struct mlx5e_priv *priv, u64 *data)
 
 static void mlx5e_devcom_cleanup_mpv(struct mlx5e_priv *priv)
 {
-	if (IS_ERR_OR_NULL(priv->devcom))
+	if (!priv->devcom)
 		return;
 
 	if (mlx5_core_is_mp_master(priv->mdev)) {
@@ -261,6 +265,7 @@ static void mlx5e_devcom_cleanup_mpv(struct mlx5e_priv *priv)
 	}
 
 	mlx5_devcom_unregister_component(priv->devcom);
+	priv->devcom = NULL;
 }
 
 static int blocking_event(struct notifier_block *nb, unsigned long event, void *data)
@@ -5884,6 +5889,7 @@ static void mlx5e_nic_disable(struct mlx5e_priv *priv)
 	if (mlx5e_monitor_counter_supported(priv))
 		mlx5e_monitor_counter_cleanup(priv);
 
+	mlx5e_ipsec_disable_events(priv);
 	mlx5e_disable_blocking_events(priv);
 	if (priv->en_trap) {
 		mlx5e_deactivate_trap(priv);

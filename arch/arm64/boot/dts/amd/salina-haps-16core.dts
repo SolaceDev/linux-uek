@@ -8,6 +8,7 @@
 /dts-v1/;
 
 #include "salina-haps.dtsi"
+#include "salina-16core.dtsi"
 #include "salina-16core-spin-table.dtsi"
 #include "salina-haps-common.dtsi"
 #include "elba-flash-parts.dtsi"

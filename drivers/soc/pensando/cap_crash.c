@@ -10,8 +10,8 @@
 #include <linux/time.h>
 #include <linux/panic_notifier.h>
 #include <linux/platform_device.h>
-#include <linux/of.h>
 #include <linux/vmalloc.h>
+#include <linux/of.h>
 #include "cap_reboot.h"
 
 #define PCRASH_NAME	"pensando-crash"
@@ -39,25 +39,25 @@ static void pcrash_do_dump(struct kmsg_dumper *dumper,
 	u32 *src;
 	size_t kmsg_dump_len;
 	struct kmsg_dump_iter iter;
-	u32 __iomem *dst = (u32 *)pcrash->flashbase;
-	struct panicbuf_header *hdr = pcrash->flashbase;
+	u32 __iomem *dst;
+	struct panicbuf_header __iomem *hdr = pcrash->flashbase;
 
 	/*
 	 * read first 32bits, if all ff then the new panic data
 	 * can be written to the panic buf.
 	 */
-	if (hdr->magic == 0xffffffff) {
+	if (readl(&hdr->magic) == 0xffffffff) {
 		kmsg_dump_rewind(&iter);
 		kmsg_dump_get_buffer(&iter, false, pcrash->panic_buf,
 				pcrash->size - sizeof(struct panicbuf_header), &kmsg_dump_len);
 
 		/* write the signature to panic buf log */
-		hdr->magic = PANIC_SIGNATURE;
-		hdr->len = kmsg_dump_len;
+		writel(PANIC_SIGNATURE, &hdr->magic);
+		writel(kmsg_dump_len, &hdr->len);
 		src = (u32 *)pcrash->panic_buf;
-		dst = (u32 *)(hdr + 1);
+		dst = (u32 __iomem *)(hdr + 1);
 		for (idx = 0; idx < roundup(kmsg_dump_len, 4) / 4; idx++)
-			*dst++ = *src++;
+			writel(*src++, dst++);
 	}
 }
 

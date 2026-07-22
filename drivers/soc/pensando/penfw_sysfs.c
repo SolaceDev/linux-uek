@@ -15,8 +15,7 @@
 
 #include "penfw_sysfs.h"
 #include "penfw.h"
-
-extern struct kobject *pensando_fw_kobj_get(void);
+#include "cap_soc.h"
 
 static struct kobject *pensando_kobj;
 static struct kobject *penfw_kobject;
@@ -326,16 +325,14 @@ int penfw_sysfs_init(struct device *penfwDevice)
 	// /sys/firmware/pensando
 	pensando_kobj = pensando_fw_kobj_get();
 	if (!pensando_kobj) {
-		dev_err(penfwDevice, "Unable to create /sys/firmware/pensando"
-				     " node\n");
+		dev_err(penfwDevice, "Unable to create /sys/firmware/pensando node\n");
 		return -ENOMEM;
 	}
 
 	// /sys/firmware/pensando/penfw
 	penfw_kobject = kobject_create_and_add("penfw", pensando_kobj);
 	if (!penfw_kobject) {
-		dev_err(penfwDevice, "Unable to create "
-				     "/sys/firmware/pensando/penfw node\n");
+		dev_err(penfwDevice, "Unable to create /sys/firmware/pensando/penfw node\n");
 		ret = -ENOMEM;
 		goto penfw_err;
 	}
@@ -343,16 +340,13 @@ int penfw_sysfs_init(struct device *penfwDevice)
 	// /sys/firmware/pensando/penfw/pentrust
 	pentrust_kobject = kobject_create_and_add("pentrust", penfw_kobject);
 	if (!pentrust_kobject) {
-		dev_err(penfwDevice, "Unable to create "
-				     "/sys/firmware/pensando/penfw/pentrust "
-				     "node\n");
+		dev_err(penfwDevice, "Unable to create /sys/firmware/pensando/penfw/pentrust node\n");
 		ret = -ENOMEM;
 		goto pentrust_err;
 	}
 
 	if (sysfs_create_group(pentrust_kobject, &pentrust_attr_group)) {
-		dev_err(penfwDevice, "Unable to create pentrust attributes "
-				     "group\n");
+		dev_err(penfwDevice, "Unable to create pentrust attributes group\n");
 		ret = -1;
 		goto bl1_err;
 	}
@@ -360,8 +354,7 @@ int penfw_sysfs_init(struct device *penfwDevice)
 	// /sys/firmware/pensando/penfw/bl1
 	bl1_kobject = kobject_create_and_add("bl1", penfw_kobject);
 	if (!bl1_kobject) {
-		dev_err(penfwDevice, "Unable to create "
-				     "/sys/firmware/pensando/penfw/bl1 node\n");
+		dev_err(penfwDevice, "Unable to create /sys/firmware/pensando/penfw/bl1 node\n");
 		ret = -ENOMEM;
 		goto bl1_err;
 	}
@@ -375,16 +368,13 @@ int penfw_sysfs_init(struct device *penfwDevice)
 	// /sys/firmware/pensando/penfw/bl31
 	bl31_kobject = kobject_create_and_add("bl31", penfw_kobject);
 	if (!bl31_kobject) {
-		dev_err(penfwDevice, "Unable to create "
-				     "/sys/firmware/pensando/penfw/bl31 "
-				     "node\n");
+		dev_err(penfwDevice, "Unable to create /sys/firmware/pensando/penfw/bl31 node\n");
 		ret = -ENOMEM;
 		goto bl31_err;
 	}
 
 	if (sysfs_create_group(bl31_kobject, &bl31_attr_group)) {
-		dev_err(penfwDevice, "Unable to create bl31 attributes "
-				     "group\n");
+		dev_err(penfwDevice, "Unable to create bl31 attributes group\n");
 		ret = -1;
 		goto lifecycle_err;
 	}
@@ -392,16 +382,13 @@ int penfw_sysfs_init(struct device *penfwDevice)
 	// /sys/firmware/pensando/penfw/lifecycle
 	lifecycle_kobject = kobject_create_and_add("lifecycle", penfw_kobject);
 	if (!lifecycle_kobject) {
-		dev_err(penfwDevice, "Unable to create "
-				     "/sys/firmware/pensando/penfw/lifecycle "
-				     "node\n");
+		dev_err(penfwDevice, "Unable to create /sys/firmware/pensando/penfw/lifecycle node\n");
 		ret = -ENOMEM;
 		goto lifecycle_err;
 	}
 
 	if (sysfs_create_group(lifecycle_kobject, &lifecycle_attr_group)) {
-		dev_err(penfwDevice, "Unable to create lifecycle attributes "
-				     "group\n");
+		dev_err(penfwDevice, "Unable to create lifecycle attributes group\n");
 		ret = -1;
 		goto lifecycle_attr_err;
 	}
@@ -433,7 +420,7 @@ int penfw_sysfs_deinit(void)
 	if (bl1_kobject)
 		kobject_put(bl1_kobject);
 	if (pentrust_kobject)
-		kobject_put(penfw_kobject);
+		kobject_put(pentrust_kobject);
 	if (penfw_kobject)
 		kobject_put(penfw_kobject);
 	if (pensando_kobj)

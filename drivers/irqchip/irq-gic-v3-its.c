@@ -5495,7 +5495,7 @@ static int __init its_of_probe(struct device_node *node)
 		}
 		if (of_address_to_resource(np, 1, &res) == 0) {
 			its->msi_encapsulator = res.start;
-                        pr_info("its msi encapsulator 0x%llx\n", its->msi_encapsulator);
+			pr_info("its msi encapsulator 0x%llx\n", its->msi_encapsulator);
 		}
 	}
 	return 0;

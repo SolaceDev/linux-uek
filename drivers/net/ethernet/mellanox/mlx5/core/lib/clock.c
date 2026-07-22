@@ -643,13 +643,6 @@ static int mlx5_extts_configure(struct ptp_clock_info *ptp,
 	int pin = -1;
 	int err = 0;
 
-	/* Reject requests with unsupported flags */
-	if (rq->extts.flags & ~(PTP_ENABLE_FEATURE |
-				PTP_RISING_EDGE |
-				PTP_FALLING_EDGE |
-				PTP_STRICT_FLAGS))
-		return -EOPNOTSUPP;
-
 	/* Reject requests to enable time stamping on both edges. */
 	if ((rq->extts.flags & PTP_STRICT_FLAGS) &&
 	    (rq->extts.flags & PTP_ENABLE_FEATURE) &&
@@ -820,12 +813,6 @@ static int perout_conf_npps_real_time(struct mlx5_core_dev *mdev, struct ptp_clo
 	return 0;
 }
 
-static bool mlx5_perout_verify_flags(struct mlx5_core_dev *mdev, unsigned int flags)
-{
-	return ((!mlx5_npps_real_time_supported(mdev) && flags) ||
-		(mlx5_npps_real_time_supported(mdev) && flags & ~PTP_PEROUT_DUTY_CYCLE));
-}
-
 static int mlx5_perout_configure(struct ptp_clock_info *ptp,
 				 struct ptp_clock_request *rq,
 				 int on)
@@ -857,12 +844,6 @@ static int mlx5_perout_configure(struct ptp_clock_info *ptp,
 	rt_mode = mlx5_real_time_mode(mdev);
 
 	if (!MLX5_PPS_CAP(mdev)) {
-		err = -EOPNOTSUPP;
-		goto unlock;
-	}
-
-	/* Reject requests with unsupported flags */
-	if (mlx5_perout_verify_flags(mdev, rq->perout.flags)) {
 		err = -EOPNOTSUPP;
 		goto unlock;
 	}
@@ -1033,6 +1014,13 @@ static void mlx5_init_pin_config(struct mlx5_core_dev *mdev)
 	clock->ptp_info.enable = mlx5_ptp_enable;
 	clock->ptp_info.verify = mlx5_ptp_verify;
 	clock->ptp_info.pps = 1;
+
+	clock->ptp_info.supported_extts_flags = PTP_RISING_EDGE |
+						PTP_FALLING_EDGE |
+						PTP_STRICT_FLAGS;
+
+	if (mlx5_npps_real_time_supported(mdev))
+		clock->ptp_info.supported_perout_flags = PTP_PEROUT_DUTY_CYCLE;
 
 	for (i = 0; i < clock->ptp_info.n_pins; i++) {
 		snprintf(clock->ptp_info.pin_config[i].name,
@@ -1360,13 +1348,19 @@ static int mlx5_clock_alloc(struct mlx5_core_dev *mdev, bool shared)
 static void mlx5_shared_clock_register(struct mlx5_core_dev *mdev, u64 key)
 {
 	struct mlx5_core_dev *peer_dev, *next = NULL;
+	struct mlx5_devcom_match_attr attr = {
+		.key.val = key,
+	};
+	struct mlx5_devcom_comp_dev *compd;
 	struct mlx5_devcom_comp_dev *pos;
 
-	mdev->clock_state->compdev = mlx5_devcom_register_component(mdev->priv.devc,
-								    MLX5_DEVCOM_SHARED_CLOCK,
-								    key, NULL, mdev);
-	if (IS_ERR(mdev->clock_state->compdev))
+	compd = mlx5_devcom_register_component(mdev->priv.devc,
+					       MLX5_DEVCOM_SHARED_CLOCK,
+					       &attr, NULL, mdev);
+	if (!compd)
 		return;
+
+	mdev->clock_state->compdev = compd;
 
 	mlx5_devcom_comp_lock(mdev->clock_state->compdev);
 	mlx5_devcom_for_each_peer_entry(mdev->clock_state->compdev, peer_dev, pos) {

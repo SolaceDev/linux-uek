@@ -90,6 +90,7 @@
 #include <net/tls.h>
 #endif
 #include <net/ip6_route.h>
+#include <net/netdev_lock.h>
 #include <net/xdp.h>
 
 #include "bonding_priv.h"
@@ -460,13 +461,14 @@ static struct net_device *bond_ipsec_dev(struct xfrm_state *xs)
 
 /**
  * bond_ipsec_add_sa - program device with a security association
+ * @bond_dev: pointer to the bond net device
  * @xs: pointer to transformer state struct
  * @extack: extack point to fill failure reason
  **/
-static int bond_ipsec_add_sa(struct xfrm_state *xs,
+static int bond_ipsec_add_sa(struct net_device *bond_dev,
+			     struct xfrm_state *xs,
 			     struct netlink_ext_ack *extack)
 {
-	struct net_device *bond_dev = xs->xso.dev;
 	struct net_device *real_dev;
 	netdevice_tracker tracker;
 	struct bond_ipsec *ipsec;
@@ -502,7 +504,7 @@ static int bond_ipsec_add_sa(struct xfrm_state *xs,
 		goto out;
 	}
 
-	err = real_dev->xfrmdev_ops->xdo_dev_state_add(xs, extack);
+	err = real_dev->xfrmdev_ops->xdo_dev_state_add(real_dev, xs, extack);
 	if (!err) {
 		xs->xso.real_dev = real_dev;
 		ipsec->xs = xs;
@@ -546,11 +548,25 @@ static void bond_ipsec_add_sa_all(struct bonding *bond)
 		if (ipsec->xs->xso.real_dev == real_dev)
 			continue;
 
-		if (real_dev->xfrmdev_ops->xdo_dev_state_add(ipsec->xs, NULL)) {
+		if (real_dev->xfrmdev_ops->xdo_dev_state_add(real_dev,
+							     ipsec->xs, NULL)) {
 			slave_warn(bond_dev, real_dev, "%s: failed to add SA\n", __func__);
 			continue;
 		}
+
+		spin_lock_bh(&ipsec->xs->lock);
+		/* xs might have been killed by the user during the migration
+		 * to the new dev, but bond_ipsec_del_sa() should have done
+		 * nothing, as xso.real_dev is NULL.
+		 * Delete it from the device we just added it to. The pending
+		 * bond_ipsec_free_sa() call will do the rest of the cleanup.
+		 */
+		if (ipsec->xs->km.state == XFRM_STATE_DEAD &&
+		    real_dev->xfrmdev_ops->xdo_dev_state_delete)
+			real_dev->xfrmdev_ops->xdo_dev_state_delete(real_dev,
+								    ipsec->xs);
 		ipsec->xs->xso.real_dev = real_dev;
+		spin_unlock_bh(&ipsec->xs->lock);
 	}
 out:
 	mutex_unlock(&bond->ipsec_lock);
@@ -558,54 +574,27 @@ out:
 
 /**
  * bond_ipsec_del_sa - clear out this specific SA
+ * @bond_dev: pointer to the bond net device
  * @xs: pointer to transformer state struct
  **/
-static void bond_ipsec_del_sa(struct xfrm_state *xs)
+static void bond_ipsec_del_sa(struct net_device *bond_dev,
+			      struct xfrm_state *xs)
 {
-	struct net_device *bond_dev = xs->xso.dev;
 	struct net_device *real_dev;
-	netdevice_tracker tracker;
-	struct bond_ipsec *ipsec;
-	struct bonding *bond;
-	struct slave *slave;
 
-	if (!bond_dev)
+	if (!bond_dev || !xs->xso.real_dev)
 		return;
 
-	rcu_read_lock();
-	bond = netdev_priv(bond_dev);
-	slave = rcu_dereference(bond->curr_active_slave);
-	real_dev = slave ? slave->dev : NULL;
-	netdev_hold(real_dev, &tracker, GFP_ATOMIC);
-	rcu_read_unlock();
-
-	if (!slave)
-		goto out;
-
-	if (!xs->xso.real_dev)
-		goto out;
-
-	WARN_ON(xs->xso.real_dev != real_dev);
+	real_dev = xs->xso.real_dev;
 
 	if (!real_dev->xfrmdev_ops ||
 	    !real_dev->xfrmdev_ops->xdo_dev_state_delete ||
 	    netif_is_bond_master(real_dev)) {
 		slave_warn(bond_dev, real_dev, "%s: no slave xdo_dev_state_delete\n", __func__);
-		goto out;
+		return;
 	}
 
-	real_dev->xfrmdev_ops->xdo_dev_state_delete(xs);
-out:
-	netdev_put(real_dev, &tracker);
-	mutex_lock(&bond->ipsec_lock);
-	list_for_each_entry(ipsec, &bond->ipsec_list, list) {
-		if (ipsec->xs == xs) {
-			list_del(&ipsec->list);
-			kfree(ipsec);
-			break;
-		}
-	}
-	mutex_unlock(&bond->ipsec_lock);
+	real_dev->xfrmdev_ops->xdo_dev_state_delete(real_dev, xs);
 }
 
 static void bond_ipsec_del_sa_all(struct bonding *bond)
@@ -631,48 +620,55 @@ static void bond_ipsec_del_sa_all(struct bonding *bond)
 			slave_warn(bond_dev, real_dev,
 				   "%s: no slave xdo_dev_state_delete\n",
 				   __func__);
-		} else {
-			ipsec->xs->xso.real_dev = NULL;
-			real_dev->xfrmdev_ops->xdo_dev_state_delete(ipsec->xs);
-			if (real_dev->xfrmdev_ops->xdo_dev_state_free)
-				real_dev->xfrmdev_ops->xdo_dev_state_free(ipsec->xs);
+			continue;
 		}
+
+		spin_lock_bh(&ipsec->xs->lock);
+		ipsec->xs->xso.real_dev = NULL;
+		/* Don't double delete states killed by the user. */
+		if (ipsec->xs->km.state != XFRM_STATE_DEAD)
+			real_dev->xfrmdev_ops->xdo_dev_state_delete(real_dev,
+								    ipsec->xs);
+		spin_unlock_bh(&ipsec->xs->lock);
+
+		if (real_dev->xfrmdev_ops->xdo_dev_state_free)
+			real_dev->xfrmdev_ops->xdo_dev_state_free(real_dev,
+								  ipsec->xs);
 	}
 	mutex_unlock(&bond->ipsec_lock);
 }
 
-static void bond_ipsec_free_sa(struct xfrm_state *xs)
+static void bond_ipsec_free_sa(struct net_device *bond_dev,
+			       struct xfrm_state *xs)
 {
-	struct net_device *bond_dev = xs->xso.dev;
 	struct net_device *real_dev;
-	netdevice_tracker tracker;
+	struct bond_ipsec *ipsec;
 	struct bonding *bond;
-	struct slave *slave;
 
 	if (!bond_dev)
 		return;
 
-	rcu_read_lock();
 	bond = netdev_priv(bond_dev);
-	slave = rcu_dereference(bond->curr_active_slave);
-	real_dev = slave ? slave->dev : NULL;
-	netdev_hold(real_dev, &tracker, GFP_ATOMIC);
-	rcu_read_unlock();
 
-	if (!slave)
-		goto out;
-
+	mutex_lock(&bond->ipsec_lock);
 	if (!xs->xso.real_dev)
 		goto out;
 
-	WARN_ON(xs->xso.real_dev != real_dev);
+	real_dev = xs->xso.real_dev;
 
 	xs->xso.real_dev = NULL;
-	if (real_dev && real_dev->xfrmdev_ops &&
+	if (real_dev->xfrmdev_ops &&
 	    real_dev->xfrmdev_ops->xdo_dev_state_free)
-		real_dev->xfrmdev_ops->xdo_dev_state_free(xs);
+		real_dev->xfrmdev_ops->xdo_dev_state_free(real_dev, xs);
 out:
-	netdev_put(real_dev, &tracker);
+	list_for_each_entry(ipsec, &bond->ipsec_list, list) {
+		if (ipsec->xs == xs) {
+			list_del(&ipsec->list);
+			kfree(ipsec);
+			break;
+		}
+	}
+	mutex_unlock(&bond->ipsec_lock);
 }
 
 /**
@@ -862,9 +858,9 @@ static int bond_check_dev_link(struct bonding *bond,
 			       struct net_device *slave_dev, int reporting)
 {
 	const struct net_device_ops *slave_ops = slave_dev->netdev_ops;
-	int (*ioctl)(struct net_device *, struct ifreq *, int);
-	struct ifreq ifr;
 	struct mii_ioctl_data *mii;
+	struct ifreq ifr;
+	int ret;
 
 	if (!reporting && !netif_running(slave_dev))
 		return 0;
@@ -873,13 +869,16 @@ static int bond_check_dev_link(struct bonding *bond,
 		return netif_carrier_ok(slave_dev) ? BMSR_LSTATUS : 0;
 
 	/* Try to get link status using Ethtool first. */
-	if (slave_dev->ethtool_ops->get_link)
-		return slave_dev->ethtool_ops->get_link(slave_dev) ?
-			BMSR_LSTATUS : 0;
+	if (slave_dev->ethtool_ops->get_link) {
+		netdev_lock_ops(slave_dev);
+		ret = slave_dev->ethtool_ops->get_link(slave_dev);
+		netdev_unlock_ops(slave_dev);
+
+		return ret ? BMSR_LSTATUS : 0;
+	}
 
 	/* Ethtool can't be used, fallback to MII ioctls. */
-	ioctl = slave_ops->ndo_eth_ioctl;
-	if (ioctl) {
+	if (slave_ops->ndo_eth_ioctl) {
 		/* TODO: set pointer to correct ioctl on a per team member
 		 *       bases to make this more efficient. that is, once
 		 *       we determine the correct ioctl, we will always
@@ -895,9 +894,10 @@ static int bond_check_dev_link(struct bonding *bond,
 		/* Yes, the mii is overlaid on the ifreq.ifr_ifru */
 		strscpy_pad(ifr.ifr_name, slave_dev->name, IFNAMSIZ);
 		mii = if_mii(&ifr);
-		if (ioctl(slave_dev, &ifr, SIOCGMIIPHY) == 0) {
+
+		if (dev_eth_ioctl(slave_dev, &ifr, SIOCGMIIPHY) == 0) {
 			mii->reg_num = MII_BMSR;
-			if (ioctl(slave_dev, &ifr, SIOCGMIIREG) == 0)
+			if (dev_eth_ioctl(slave_dev, &ifr, SIOCGMIIREG) == 0)
 				return mii->val_out & BMSR_LSTATUS;
 		}
 	}
@@ -2624,10 +2624,13 @@ static int __bond_release_one(struct net_device *bond_dev,
 		dev_set_mac_address(slave_dev, (struct sockaddr *)&ss, NULL);
 	}
 
-	if (unregister)
+	if (unregister) {
+		netdev_lock_ops(slave_dev);
 		__dev_set_mtu(slave_dev, slave->original_mtu);
-	else
+		netdev_unlock_ops(slave_dev);
+	} else {
 		dev_set_mtu(slave_dev, slave->original_mtu);
+	}
 
 	if (!netif_is_bond_master(slave_dev))
 		slave_dev->priv_flags &= ~IFF_BONDING;
@@ -5321,22 +5324,18 @@ static netdev_tx_t bond_xmit_broadcast(struct sk_buff *skb,
 				       struct net_device *bond_dev)
 {
 	struct bonding *bond = netdev_priv(bond_dev);
-	struct bond_up_slave *slaves;
+	struct slave *slave = NULL;
+	struct list_head *iter;
 	bool xmit_suc = false;
 	bool skb_used = false;
-	int slaves_count, i;
 
-	slaves = rcu_dereference(bond->all_slaves);
-
-	slaves_count = slaves ? READ_ONCE(slaves->count) : 0;
-	for (i = 0; i < slaves_count; i++) {
-		struct slave *slave = slaves->arr[i];
+	bond_for_each_slave_rcu(bond, slave, iter) {
 		struct sk_buff *skb2;
 
 		if (!(bond_slave_is_up(slave) && slave->link == BOND_LINK_UP))
 			continue;
 
-		if (i + 1 == slaves_count) {
+		if (bond_is_last_slave(bond, slave)) {
 			skb2 = skb;
 			skb_used = true;
 		} else {

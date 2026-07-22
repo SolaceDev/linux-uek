@@ -139,7 +139,7 @@ static void penfw_remove(struct platform_device *pd)
 	pr_info("penfw: Exiting!\n");
 }
 
-static struct of_device_id penfw_of_match[] = {
+static const struct of_device_id penfw_of_match[] = {
 	{ .compatible = "pensando,penfw" },
 	{ /* end of table */ }
 };

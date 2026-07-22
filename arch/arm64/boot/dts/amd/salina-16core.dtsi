@@ -48,14 +48,12 @@
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0>;
-			enable-method = "spin-table";
 		};
 
 		cpu1: cpu@10000 {
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0x10000>;
-			enable-method = "spin-table";
 		};
 
 		/* CLUSTER 1 */
@@ -63,14 +61,12 @@
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0x20000>;
-			enable-method = "spin-table";
 		};
 
 		cpu3: cpu@30000 {
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0x30000>;
-			enable-method = "spin-table";
 		};
 
 		/* CLUSTER 2 */
@@ -78,14 +74,12 @@
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0x40000>;
-			enable-method = "spin-table";
 		};
 
 		cpu5: cpu@50000 {
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0x50000>;
-			enable-method = "spin-table";
 		};
 
 		/* CLUSTER 3 */
@@ -93,14 +87,12 @@
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0x60000>;
-			enable-method = "spin-table";
 		};
 
 		cpu7: cpu@70000 {
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0x70000>;
-			enable-method = "spin-table";
 		};
 
 		/* CLUSTER 4 */
@@ -108,14 +100,12 @@
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0x80000>;
-			enable-method = "spin-table";
 		};
 
 		cpu9: cpu@90000 {
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0x90000>;
-			enable-method = "spin-table";
 		};
 
 		/* CLUSTER 5 */
@@ -123,14 +113,12 @@
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0xa0000>;
-			enable-method = "spin-table";
 		};
 
 		cpu11: cpu@b0000 {
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0xb0000>;
-			enable-method = "spin-table";
 		};
 
 		/* CLUSTER 6 */
@@ -138,14 +126,12 @@
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0xc0000>;
-			enable-method = "spin-table";
 		};
 
 		cpu13: cpu@d0000 {
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0xd0000>;
-			enable-method = "spin-table";
 		};
 
 		/* CLUSTER 7 */
@@ -153,14 +139,12 @@
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0xe0000>;
-			enable-method = "spin-table";
 		};
 
 		cpu15: cpu@f0000 {
 			device_type = "cpu";
 			compatible = "arm,neoverse-n1";
 			reg = <0 0xf0000>;
-			enable-method = "spin-table";
 		};
 	};
 };

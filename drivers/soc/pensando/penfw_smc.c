@@ -13,11 +13,6 @@
 
 #define PENFW_CALL_FID			    0xC2000002
 
-extern void *penfwdata;
-extern phys_addr_t penfwdata_phys;
-void penfw_smc_get_chip_cert(struct penfw_call_args *args);
-void penfw_smc_attest_get_time(struct penfw_call_args *args);
-
 static const char *_opcode_to_str(uint8_t opcode)
 {
 	switch (opcode) {
@@ -63,7 +58,7 @@ static const char *_opcode_to_str(uint8_t opcode)
  * a2 = user buffer pointer to save the cert
  * a3 = length of the user buf to get the chip cert
  */
-void penfw_smc_get_chip_cert(struct penfw_call_args *args)
+static void penfw_smc_get_chip_cert(struct penfw_call_args *args)
 {
 	struct arm_smccc_res res = {0};
 	uint8_t *chip_cert = NULL;
@@ -117,7 +112,7 @@ void penfw_smc_get_chip_cert(struct penfw_call_args *args)
  * a4 = pointer to user buffer for attestation data.
  * a5 = length of user attestation buffer
  */
-void penfw_smc_attest_get_time(struct penfw_call_args *args)
+static void penfw_smc_attest_get_time(struct penfw_call_args *args)
 {
 	struct penfw_time_attestation *attp;
 	struct arm_smccc_res res = {0};
@@ -206,7 +201,6 @@ void penfw_smc(struct penfw_call_args *args)
 		break;
 	}
 
-	pr_debug("penfw: smc return a0: 0x%llx a1: 0x%llx "\
-		 "a2: 0x%llx a3: 0x%llx\n", args->a0, args->a1,
-		 args->a2, args->a3);
+	pr_debug("penfw: smc return a0: 0x%llx a1: 0x%llx a2: 0x%llx a3: 0x%llx\n",
+		 args->a0, args->a1, args->a2, args->a3);
 }

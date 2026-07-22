@@ -9,6 +9,7 @@
 
 #include "elba.dtsi"
 #include "elba-16core.dtsi"
+#include "elba-16core-spin-table.dtsi"
 #include "elba-asic-common.dtsi"
 #include "elba-flash-parts.dtsi"
 #include "elba-asic-memory.dtsi"
@@ -16,7 +17,7 @@
 
 / {
 	model = "AMD Pensando Elba Board";
-	compatible = "amd,pensando-elba-ortano", "amd,pensando-elba";
+	compatible = "amd,pensando-elba";
 
 	aliases {
 		serial0 = &uart0;

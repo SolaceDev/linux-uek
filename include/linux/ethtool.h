@@ -1159,6 +1159,7 @@ int ethtool_virtdev_set_link_ksettings(struct net_device *dev,
  * @rss_ctx:		XArray of custom RSS contexts
  * @rss_lock:		Protects entries in @rss_ctx.  May be taken from
  *			within RTNL.
+ * @hds_config:		HDS value from userspace.
  * @wol_enabled:	Wake-on-LAN is enabled
  * @module_fw_flash_in_progress: Module firmware flashing is in progress.
  */
@@ -1167,6 +1168,8 @@ struct ethtool_netdev_state {
 	struct mutex		rss_lock;
 	unsigned		wol_enabled:1;
 	unsigned		module_fw_flash_in_progress:1;
+
+	UEK_KABI_FILL_HOLE(u8	hds_config)
 };
 
 struct phy_device;
@@ -1309,6 +1312,17 @@ extern __printf(2, 3) void ethtool_sprintf(u8 **data, const char *fmt, ...);
  * two arguments or if @fmt is just "%s".
  */
 extern void ethtool_puts(u8 **data, const char *str);
+
+/**
+ * ethtool_cpy - Write possibly-not-NUL-terminated string to ethtool string data
+ * @data: Pointer to a pointer to the start of string to write into
+ * @str: NUL-byte padded char array of size ETH_GSTRING_LEN to copy from
+ */
+#define ethtool_cpy(data, str)	do {				\
+	BUILD_BUG_ON(sizeof(str) != ETH_GSTRING_LEN);		\
+	memcpy(*(data), str, ETH_GSTRING_LEN);			\
+	*(data) += ETH_GSTRING_LEN;				\
+} while (0)
 
 /* Link mode to forced speed capabilities maps */
 struct ethtool_forced_speed_map {

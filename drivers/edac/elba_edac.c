@@ -336,7 +336,7 @@ static int elba_edac_mc_panic_notifier(struct notifier_block *nb,
 			if (elba_edac_mc_u_poll(mcp, chan, subchan, int_stat,
 						&res)) {
 				if (mcp->is_ddr5)
-					pr_crit(KERN_CRIT "EDAC MC0: %u UE %s "
+					pr_crit("EDAC MC0: %u UE %s "
 						"on unknown memory (channel:%u "
 						"slot:%u page:0x%llx "
 						"offset:0x%llx "
@@ -347,7 +347,7 @@ static int elba_edac_mc_panic_notifier(struct notifier_block *nb,
 						res.bus_addr & ~PAGE_MASK,
 						res.synd);
 				else
-					pr_crit(KERN_CRIT "EDAC MC0: %u UE %s "
+					pr_crit("EDAC MC0: %u UE %s "
 						"on unknown memory (channel:%u "
 						"page:0x%llx "
 						"offset:0x%llx "
@@ -541,7 +541,7 @@ static int elba_edac_mc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int elba_edac_mc_remove(struct platform_device *pdev)
+static void elba_edac_mc_remove(struct platform_device *pdev)
 {
 	struct mem_ctl_info *mci = platform_get_drvdata(pdev);
 
@@ -549,7 +549,6 @@ static int elba_edac_mc_remove(struct platform_device *pdev)
 	atomic_notifier_chain_unregister(&panic_notifier_list, &panic_block);
 
 	edac_mc_free(mci);
-	return 0;
 }
 
 static const struct of_device_id elba_edac_mc_of_match[] = {

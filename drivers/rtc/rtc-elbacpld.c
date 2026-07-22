@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* drivers/rtc/rtc-elbacpld.c
- *
+/*
  * Driver for AMD ELBA CPLD real-time clock.
  *
  * Copyright (C) 2023 AMD Corporation
@@ -12,7 +11,6 @@
  *
  * Driver reads Clock and Date registers from ELBA CPLD over SPI.
  * Uses SPI regmap created by driver mfd/pensando-elbasr.c.
- *
  */
 #include <linux/bcd.h>
 #include <linux/err.h>

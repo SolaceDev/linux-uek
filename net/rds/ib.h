@@ -92,11 +92,6 @@ enum rds_ib_conn_flags {
 
 #define RDS_IB_CQ_FOLLOW_AFFINITY_THROTTLE	100 /* msec */
 
-#define RDS_IB_CM_IB_GEN_MASK 7
-#define RDS_IB_CM_ID_ADD_GEN(conn, gen) ((void *)((uintptr_t)(conn) + (gen)))
-#define RDS_IB_CM_ID_EXTRACT_GEN(id) ((uintptr_t)(id)->context & RDS_IB_CM_IB_GEN_MASK)
-#define RDS_IB_CM_ID_EXTRACT_CONN(id) ((void *)((uintptr_t)(id)->context & ~RDS_IB_CM_IB_GEN_MASK))
-
 enum rds_ib_preferred_cpu_options {
 	RDS_IB_PREFER_CPU_CQ		= 1 << 0,
 	RDS_IB_PREFER_CPU_NUMA		= 1 << 1,
@@ -363,7 +358,6 @@ struct rds_ib_connection {
 	u16			i_frag_sz;	/* IB fragment size */
 	u16			i_frag_cache_sz;
 	u8			i_frag_pages;
-	u8			i_cm_id_gen:3;
 	unsigned long		i_flags;
 	u16			i_frag_cache_inx;
 	u16			i_hca_sge;
@@ -393,6 +387,8 @@ struct rds_ib_connection {
 	spinlock_t              i_rx_lock;
 	unsigned int            i_rx_wait_for_handler;
 	atomic_t                i_worker_has_rx;
+	atomic_t		i_spawned_cm_handlers_count;
+	wait_queue_head_t	i_spawned_cm_handlers_wait;
 	int			i_preferred_send_cpu;
 	int			i_preferred_recv_cpu;
 	int			i_preferred_recv_sibling;
@@ -635,7 +631,6 @@ struct rds_ib_statistics {
 	uint64_t	s_ib_frag_pages_allocated;
 	uint64_t	s_ib_frag_pages_in_ib_recv_queue;
 	uint64_t	s_ib_frag_pages_in_caches;
-	uint64_t	s_ib_cm_id_resurrected;
 };
 
 extern struct workqueue_struct *rds_ib_wq;

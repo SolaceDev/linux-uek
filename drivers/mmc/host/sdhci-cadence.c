@@ -75,7 +75,7 @@ struct sdhci_cdns_phy_param {
 #define BOUNCE_BUFSZ      SZ_64K
 #define BOUNCE_BUF_OFFSET 0x1000       /* Located after adma table */
 #define DEV_TO_SDHCI_PRIV(dev) \
-	(struct sdhci_cdns_priv *)(sdhci_pltfm_priv(sdhci_priv(dev_get_drvdata(dev))))
+	((struct sdhci_cdns_priv *)(sdhci_pltfm_priv(sdhci_priv(dev_get_drvdata(dev)))))
 
 struct sdhci_cdns_bounce {
 	dma_addr_t addr;
@@ -311,6 +311,8 @@ static int sdhci_cdns_execute_tuning(struct sdhci_host *host, u32 opcode)
 		dev_err(mmc_dev(host->mmc), "no tuning point found\n");
 		return -EIO;
 	}
+	dev_info(mmc_dev(host->mmc), "tuning val %d, streak end %d, max %d\n",
+		 end_of_streak - max_streak / 2, end_of_streak, max_streak);
 
 	return sdhci_cdns_set_tune_val(host, end_of_streak - max_streak / 2);
 }
@@ -413,6 +415,12 @@ static void *elba_dma_alloc(struct device *dev, size_t size,
 	return priv->bounce->vaddr;
 }
 
+static void elba_dma_free(struct device *dev, size_t size, void *vaddr,
+			  dma_addr_t dma_handle, unsigned long attrs)
+{
+	/* The bounce region is devm-managed and freed with the device. */
+}
+
 /*
  * Copy the swiotlb ddr bounce buffer from or back to the original dma location
  */
@@ -429,6 +437,8 @@ static void elba_swiotlb_bounce(struct device *dev, phys_addr_t orig_addr,
 		memcpy(vaddr, phys_to_virt(orig_addr), size);
 	else
 		memcpy(phys_to_virt(orig_addr), vaddr, size);
+
+	/* Ensure the bounce-buffer copy is visible before DMA is started */
 	mb();
 }
 
@@ -597,8 +607,10 @@ static void elba_adma_write_desc(struct sdhci_host *host, void **desc,
 	*desc += host->desc_sz;
 
 	if (cmd == ADMA2_NOP_END_VALID) {
+		/* Force the descriptor write back and wait for it to land */
 		barrier();
-		(void)*(volatile uint32_t *)dma_desc;
+		(void)READ_ONCE(*(u32 *)dma_desc);
+		/* Ensure the descriptor is visible before the DMA engine runs */
 		mb();
 	}
 }
@@ -611,12 +623,14 @@ static const struct sdhci_ops sdhci_elba_ops = {
 	.get_timeout_clock = sdhci_cdns_get_timeout_clock,
 	.set_bus_width = sdhci_set_bus_width,
 	.reset = sdhci_reset,
+	.platform_execute_tuning = sdhci_cdns_execute_tuning,
 	.set_uhs_signaling = sdhci_cdns_set_uhs_signaling,
 	.adma_write_desc = elba_adma_write_desc,
 };
 
 static const struct dma_map_ops elba_dma_mapping_ops = {
 	.alloc = elba_dma_alloc,
+	.free = elba_dma_free,
 	.map_sg = elba_dma_map_sg,
 	.unmap_sg = elba_dma_unmap_sg,
 };
@@ -626,6 +640,7 @@ static const struct sdhci_ops sdhci_salina_ops = {
 	.get_timeout_clock = sdhci_cdns_get_timeout_clock,
 	.set_bus_width = sdhci_set_bus_width,
 	.reset = sdhci_reset,
+	.platform_execute_tuning = sdhci_cdns_execute_tuning,
 	.set_uhs_signaling = sdhci_cdns_set_uhs_signaling,
 	.adma_write_desc = elba_adma_write_desc,
 };
@@ -666,7 +681,7 @@ static int setup_bounce_buffer(struct platform_device *pdev)
 
 		/* Each entry holds the original dma buffer address */
 		priv->bounce->io_orig_addr = devm_kzalloc(&pdev->dev,
-				sizeof(priv->bounce->io_orig_addr) * buffer_count,
+				sizeof(*priv->bounce->io_orig_addr) * buffer_count,
 				GFP_KERNEL);
 		if (!priv->bounce->io_orig_addr) {
 			devm_kfree(&pdev->dev, priv->bounce);
@@ -772,7 +787,6 @@ static const struct sdhci_cdns_drv_data sdhci_salina_drv_data = {
 };
 
 static const struct sdhci_cdns_drv_data sdhci_eyeq_drv_data = {
-	.init = salina_drv_init,
 	.pltfm_data = {
 		.ops = &sdhci_cdns_ops,
 		.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN,
@@ -812,6 +826,8 @@ static void sdhci_cdns_mmc_hw_reset(struct mmc_host *mmc)
 
 	dev_info(mmc_dev(host->mmc), "emmc hardware reset\n");
 
+	disable_irq(host->irq);
+
 	reset_control_assert(priv->rst_hw);
 	/* For eMMC, minimum is 1us but give it 3us for good measure */
 	udelay(3);
@@ -819,6 +835,8 @@ static void sdhci_cdns_mmc_hw_reset(struct mmc_host *mmc)
 	reset_control_deassert(priv->rst_hw);
 	/* For eMMC, minimum is 200us but give it 300us for good measure */
 	usleep_range(300, 1000);
+
+	enable_irq(host->irq);
 }
 
 static int sdhci_cdns_probe(struct platform_device *pdev)

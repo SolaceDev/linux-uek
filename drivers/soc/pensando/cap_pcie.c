@@ -21,9 +21,6 @@
 #include "cap_reboot.h"
 #include "cap_rstcause.h"
 #include "penpcie_dev.h"
-#ifdef CONFIG_ARCH_PENSANDO_CAPRI_SOC
-#include "cap_pcie_capri.h"
-#endif
 #ifdef CONFIG_ARCH_PENSANDO_ELBA_SOC
 #include "cap_pcie_elba.h"
 #endif
@@ -86,24 +83,28 @@ static int pciep_access_in_progress(void)
 	return 0;
 }
 
-int platform_serror(struct pt_regs *regs, unsigned int esr)
+int platform_serror(struct pt_regs *regs, unsigned long esr)
 {
 	if (pciep_access_in_progress())
 		return 1;
 
-	// TODO: Salina N1 async SError user mode convert to bus error
-	// ESR_ELx[5:0] = 0b010001  Asynchronous SError exception
+	/*
+	 * Salina N1: Convert asynchronous SError caused by PCIe refclock
+	 * removal during MMIO access into a clean SIGBUS for user space.
+	 * ESR[5:0] == 0b010001 (asynchronous SError) or specific decode
+	 * error patterns.
+	 */
 	if (((esr & 0x11) == 0x11) ||
 	    ((esr >> 26) == 0x2f && (esr & 0x3) == 0x0)) { /* Decode Error */
 		if (user_mode(regs)) {
 			struct task_struct *tsk = current;
 
-			pr_info("%s[%d]: serror converted to bus error\n",
-				tsk->comm, task_pid_nr(tsk));
+			pr_info_ratelimited("%s[%d]: serror converted to bus error, ESR=0x%lx\n",
+					    tsk->comm, task_pid_nr(tsk), esr);
 			force_signal_inject(SIGBUS, BUS_ADRERR, regs->pc, esr);
 		} else {
-			/* ignore */
-			pr_info("ignoring serror decode-error in kernel mode\n");
+			pr_info_ratelimited("ignoring serror decode-error in kernel mode, ESR=0x%lx\n",
+					    esr);
 		}
 		return 1;
 	}
@@ -355,9 +356,7 @@ static int map_resources(struct platform_device *pd)
 	pi->wdt = of_iomap(dn, WDT_IDX);
 	pi->pcieva = of_iomap(dn, PCIE_IDX);
 
-	if (IS_ERR(pi->ms_cfg_wdt) ||
-		IS_ERR(pi->wdt) ||
-		IS_ERR(pi->pcieva)) {
+	if (!pi->ms_cfg_wdt || !pi->wdt || !pi->pcieva) {
 		pr_err(PFX "iomap resources failed\n");
 		goto errout;
 	}

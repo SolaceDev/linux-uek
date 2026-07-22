@@ -2,7 +2,7 @@
 /*
  * Lattice RD1173 SPI to I2C bus interface driver
  *
- * Copyright (C) 2020-2022 Pensando Systems, Inc.
+ * Copyright (C) 2020-2026 Pensando Systems, Inc.
  */
 
 #include <linux/gpio/consumer.h>
@@ -17,67 +17,68 @@
 #include <linux/delay.h>
 #include <linux/sysfs.h>
 
-/* SoC is assigned I2C bus 0 */
-#define PORT1_I2C_BUS_NUM    1
-#define PORT2_I2C_BUS_NUM    2
-
 /* SPI command bits 7:4 */
-#define RD1173_CMD_REG_WR         0x00    /* write internal reg */
-#define RD1173_CMD_REG_RD         0x10    /* read internal reg */
-#define RD1173_CMD_INT_CHECK      0x20    /* interrupt check */
-#define RD1173_CMD_I2C_WR_N       0x30    /* write N bytes */
-#define RD1173_CMD_I2C_RD_N       0x40    /* read N bytes */
-#define RD1173_CMD_RD_RX_FIFO     0x50    /* read rx fifo */
+#define RD1173_CMD_REG_WR	  0x00	  /* write internal reg */
+#define RD1173_CMD_REG_RD	  0x10	  /* read internal reg */
+#define RD1173_CMD_INT_CHECK	  0x20	  /* interrupt check */
+#define RD1173_CMD_I2C_WR_N	  0x30	  /* write N bytes */
+#define RD1173_CMD_I2C_RD_N	  0x40	  /* read N bytes */
+#define RD1173_CMD_RD_RX_FIFO	  0x50	  /* read rx fifo */
 
 /* Register address bits 3:0 */
-#define RD1173_FIFO_STATUS_REG    0x01
-#define RD1173_I2C0_CONFIG_REG    0x04
-#define RD1173_I2C0_MODE_REG      0x05
+#define RD1173_FIFO_STATUS_REG	  0x01
+#define RD1173_I2C0_CONFIG_REG	  0x04
+#define RD1173_I2C0_MODE_REG	  0x05
 #define RD1173_I2C0_CMD_STAT_REG  0x06
-#define RD1173_I2C1_CONFIG_REG    0x0a
-#define RD1173_I2C1_MODE_REG      0x0b
+#define RD1173_I2C1_CONFIG_REG	  0x0a
+#define RD1173_I2C1_MODE_REG	  0x0b
 #define RD1173_I2C1_CMD_STAT_REG  0x0c
 
 /* Register offset from master regbase */
-#define RD1173_CONFIG_REG         0x00
-#define RD1173_MODE_REG           0x01
-#define RD1173_CMD_STAT_REG       0x02
+#define RD1173_CONFIG_REG	  0x00
+#define RD1173_MODE_REG		  0x01
+#define RD1173_CMD_STAT_REG	  0x02
 
 /* FIFO register definitions */
-#define RD1173_FIFO_RX0_FULL      0x80
-#define RD1173_FIFO_RX0_EMPTY     0x40
-#define RD1173_FIFO_TX0_FULL      0x20
-#define RD1173_FIFO_TX0_EMPTY     0x10
-#define RD1173_FIFO_RX1_FULL      0x08
-#define RD1173_FIFO_RX1_EMPTY     0x04
-#define RD1173_FIFO_TX1_FULL      0x02
-#define RD1173_FIFO_TX1_EMPTY     0x01
+#define RD1173_FIFO_RX0_FULL	  0x80
+#define RD1173_FIFO_RX0_EMPTY	  0x40
+#define RD1173_FIFO_TX0_FULL	  0x20
+#define RD1173_FIFO_TX0_EMPTY	  0x10
+#define RD1173_FIFO_RX1_FULL	  0x08
+#define RD1173_FIFO_RX1_EMPTY	  0x04
+#define RD1173_FIFO_TX1_FULL	  0x02
+#define RD1173_FIFO_TX1_EMPTY	  0x01
 
 /* Configuration register definitions */
-#define RD1173_CONFIG_RESET       0x80
+#define RD1173_CONFIG_RESET	  0x80
 #define RD1173_CONFIG_RXFIFO_CLR  0x40
 #define RD1173_CONFIG_TXFIFO_CLR  0x20
-#define RD1173_CONFIG_ABORT       0x10
+#define RD1173_CONFIG_ABORT	  0x10
 #define RD1173_CONFIG_RXREAD_CLR  0x08
 #define RD1173_CONFIG_TXREAD_CLR  0x04
-#define RD1173_CONFIG_INT_CLR     0x02
-#define RD1173_CONFIG_START       0x01
+#define RD1173_CONFIG_INT_CLR	  0x02
+#define RD1173_CONFIG_START	  0x01
 
 /* Mode register definitions */
-#define RD1173_MODE_BPS1          0x80
-#define RD1173_MODE_BPS0          0x40
-#define RD1173_MODE_TX_IE         0x20
-#define RD1173_MODE_ACK_POL       0x10
-#define RD1173_MODE_RX_IE         0x08
+#define RD1173_MODE_BPS1	  0x80
+#define RD1173_MODE_BPS0	  0x40
+#define RD1173_MODE_TX_IE	  0x20
+#define RD1173_MODE_ACK_POL	  0x10
+#define RD1173_MODE_RX_IE	  0x08
 
 /* Command status register definitions */
-#define RD1173_STAT_I2C_BUSY      0x80
-#define RD1173_STAT_NO_ANS        0x40
-#define RD1173_STAT_NO_ACK        0x20
-#define RD1173_STAT_TX_ERR        0x10
-#define RD1173_STAT_RX_ERR        0x08
-#define RD1173_STAT_ABORT_ACK     0x04
-#define RD1173_STAT_TS            0x02
+#define RD1173_STAT_I2C_BUSY	  0x80
+#define RD1173_STAT_NO_ANS	  0x40
+#define RD1173_STAT_NO_ACK	  0x20
+#define RD1173_STAT_TX_ERR	  0x10
+#define RD1173_STAT_RX_ERR	  0x08
+#define RD1173_STAT_ABORT_ACK	  0x04
+#define RD1173_STAT_TS		  0x02
+
+#define RD1173_RESET_ERRORS	(RD1173_STAT_I2C_BUSY | \
+				 RD1173_STAT_TX_ERR | \
+				 RD1173_STAT_RX_ERR | \
+				 RD1173_STAT_ABORT_ACK)
 
 struct i2c_stats {
 	u32 i2c0_tx_complete;
@@ -103,7 +104,7 @@ struct rd1173_i2c_adapter {
 	struct rd1173dev *rd1173dev;
 	struct i2c_adapter i2c_adap;
 	int i2c_master;
-	int state;
+	unsigned int state;
 	u32 offset;
 };
 
@@ -128,57 +129,128 @@ struct chipdesc {
 	const struct regmap_config *regmap_cfg;
 };
 
-#define i2c_show_simple(field, name, format_string, cast)                  \
-static ssize_t                                                             \
-show_##name(struct device *dev, struct device_attribute *attr, char *buf)  \
-{                                                                          \
-	struct spi_device *spi = to_spi_device(dev);                       \
-	struct rd1173dev *rd1173dev = spi_get_drvdata(spi);                \
-	struct i2c_stats *i2c_stats = &rd1173dev->stats;                   \
-									   \
-	return snprintf(buf, 20, format_string, cast i2c_stats->field);    \
+struct rd1173_stat_attribute {
+	struct device_attribute dev_attr;
+	size_t offset;
+};
+
+struct rd1173_reg_attribute {
+	struct device_attribute dev_attr;
+	unsigned int reg;
+};
+
+static ssize_t rd1173_stat_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct spi_device *spi = to_spi_device(dev);
+	struct rd1173dev *rd1173dev = spi_get_drvdata(spi);
+	struct rd1173_stat_attribute *stat_attr;
+	u32 *field;
+
+	stat_attr = container_of(attr, struct rd1173_stat_attribute, dev_attr);
+	field = (u32 *)((u8 *)&rd1173dev->stats + stat_attr->offset);
+
+	return sysfs_emit(buf, "%u\n", *field);
 }
 
-#define i2c_attr_show(field, name, format_string, type)         \
-	i2c_show_simple(field, name, format_string, (type))     \
-static DEVICE_ATTR(name, 0444, show_##name, NULL)
+static struct rd1173_stat_attribute dev_attr_i2c0_tx_complete = {
+	.dev_attr = __ATTR(i2c0_tx_complete, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c0_tx_complete),
+};
 
-i2c_attr_show(i2c0_tx_complete, i2c0_tx_complete, "%d\n", u32);
-i2c_attr_show(i2c0_rx_complete, i2c0_rx_complete, "%d\n", u32);
-i2c_attr_show(i2c0_busy, i2c0_busy, "%d\n", u32);
-i2c_attr_show(i2c0_no_answer, i2c0_no_answer, "%d\n", u32);
-i2c_attr_show(i2c0_no_ack, i2c0_no_ack, "%d\n", u32);
-i2c_attr_show(i2c0_tx_error, i2c0_tx_error, "%d\n", u32);
-i2c_attr_show(i2c0_rx_error, i2c0_rx_error, "%d\n", u32);
-i2c_attr_show(i2c0_abort_ack, i2c0_abort_ack, "%d\n", u32);
+static struct rd1173_stat_attribute dev_attr_i2c0_rx_complete = {
+	.dev_attr = __ATTR(i2c0_rx_complete, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c0_rx_complete),
+};
 
-i2c_attr_show(i2c1_tx_complete, i2c1_tx_complete, "%d\n", u32);
-i2c_attr_show(i2c1_rx_complete, i2c1_rx_complete, "%d\n", u32);
-i2c_attr_show(i2c1_busy, i2c1_busy, "%d\n", u32);
-i2c_attr_show(i2c1_no_answer, i2c1_no_answer, "%d\n", u32);
-i2c_attr_show(i2c1_no_ack, i2c1_no_ack, "%d\n", u32);
-i2c_attr_show(i2c1_tx_error, i2c1_tx_error, "%d\n", u32);
-i2c_attr_show(i2c1_rx_error, i2c1_rx_error, "%d\n", u32);
-i2c_attr_show(i2c1_abort_ack, i2c1_abort_ack, "%d\n", u32);
+static struct rd1173_stat_attribute dev_attr_i2c0_busy = {
+	.dev_attr = __ATTR(i2c0_busy, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c0_busy),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c0_no_answer = {
+	.dev_attr = __ATTR(i2c0_no_answer, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c0_no_answer),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c0_no_ack = {
+	.dev_attr = __ATTR(i2c0_no_ack, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c0_no_ack),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c0_tx_error = {
+	.dev_attr = __ATTR(i2c0_tx_error, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c0_tx_error),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c0_rx_error = {
+	.dev_attr = __ATTR(i2c0_rx_error, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c0_rx_error),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c0_abort_ack = {
+	.dev_attr = __ATTR(i2c0_abort_ack, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c0_abort_ack),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c1_tx_complete = {
+	.dev_attr = __ATTR(i2c1_tx_complete, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c1_tx_complete),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c1_rx_complete = {
+	.dev_attr = __ATTR(i2c1_rx_complete, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c1_rx_complete),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c1_busy = {
+	.dev_attr = __ATTR(i2c1_busy, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c1_busy),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c1_no_answer = {
+	.dev_attr = __ATTR(i2c1_no_answer, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c1_no_answer),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c1_no_ack = {
+	.dev_attr = __ATTR(i2c1_no_ack, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c1_no_ack),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c1_tx_error = {
+	.dev_attr = __ATTR(i2c1_tx_error, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c1_tx_error),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c1_rx_error = {
+	.dev_attr = __ATTR(i2c1_rx_error, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c1_rx_error),
+};
+
+static struct rd1173_stat_attribute dev_attr_i2c1_abort_ack = {
+	.dev_attr = __ATTR(i2c1_abort_ack, 0444, rd1173_stat_show, NULL),
+	.offset = offsetof(struct i2c_stats, i2c1_abort_ack),
+};
 
 static struct attribute *i2c_attrs[] = {
-	&dev_attr_i2c0_tx_complete.attr,
-	&dev_attr_i2c0_rx_complete.attr,
-	&dev_attr_i2c0_busy.attr,
-	&dev_attr_i2c0_no_answer.attr,
-	&dev_attr_i2c0_no_ack.attr,
-	&dev_attr_i2c0_tx_error.attr,
-	&dev_attr_i2c0_rx_error.attr,
-	&dev_attr_i2c0_abort_ack.attr,
+	&dev_attr_i2c0_tx_complete.dev_attr.attr,
+	&dev_attr_i2c0_rx_complete.dev_attr.attr,
+	&dev_attr_i2c0_busy.dev_attr.attr,
+	&dev_attr_i2c0_no_answer.dev_attr.attr,
+	&dev_attr_i2c0_no_ack.dev_attr.attr,
+	&dev_attr_i2c0_tx_error.dev_attr.attr,
+	&dev_attr_i2c0_rx_error.dev_attr.attr,
+	&dev_attr_i2c0_abort_ack.dev_attr.attr,
 
-	&dev_attr_i2c1_tx_complete.attr,
-	&dev_attr_i2c1_rx_complete.attr,
-	&dev_attr_i2c1_busy.attr,
-	&dev_attr_i2c1_no_answer.attr,
-	&dev_attr_i2c1_no_ack.attr,
-	&dev_attr_i2c1_tx_error.attr,
-	&dev_attr_i2c1_rx_error.attr,
-	&dev_attr_i2c1_abort_ack.attr,
+	&dev_attr_i2c1_tx_complete.dev_attr.attr,
+	&dev_attr_i2c1_rx_complete.dev_attr.attr,
+	&dev_attr_i2c1_busy.dev_attr.attr,
+	&dev_attr_i2c1_no_answer.dev_attr.attr,
+	&dev_attr_i2c1_no_ack.dev_attr.attr,
+	&dev_attr_i2c1_tx_error.dev_attr.attr,
+	&dev_attr_i2c1_rx_error.dev_attr.attr,
+	&dev_attr_i2c1_abort_ack.dev_attr.attr,
 	NULL,
 };
 
@@ -186,61 +258,93 @@ static const struct attribute_group i2c_attr_group = {
 	.attrs = i2c_attrs,
 };
 
-#define rd1173_show_simple(field, name, format_string, cast)		\
-static ssize_t								\
-show_##name(struct device *dev, struct device_attribute *attr,		\
-	    char *buf)							\
-{									\
-	struct spi_device *spi = to_spi_device(dev);			\
-	struct rd1173dev *rd1173dev = spi_get_drvdata(spi);		\
-	unsigned int val;						\
-									\
-	regmap_read(rd1173dev->regmap, field, &val);			\
-	return snprintf(buf, 20, format_string, cast val);		\
+static ssize_t rd1173_reg_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct spi_device *spi = to_spi_device(dev);
+	struct rd1173dev *rd1173dev = spi_get_drvdata(spi);
+	struct rd1173_reg_attribute *reg_attr;
+	unsigned int val;
+	int ret;
+
+	reg_attr = container_of(attr, struct rd1173_reg_attribute, dev_attr);
+
+	ret = regmap_read(rd1173dev->regmap, reg_attr->reg, &val);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "0x%02x\n", val);
 }
 
-#define rd1173_store_simple(field, name, base)				\
-static ssize_t								\
-store_##name(struct device *dev, struct device_attribute *attr,		\
-	     const char *buf, size_t count)				\
-{									\
-	struct spi_device *spi = to_spi_device(dev);			\
-	struct rd1173dev *rd1173dev = spi_get_drvdata(spi);		\
-	unsigned long val;						\
-	int ret;							\
-									\
-	ret = kstrtoul(buf, base, &val);				\
-	if (ret)							\
-		return ret;						\
-	regmap_write(rd1173dev->regmap, field, (unsigned int)val);	\
-	return count;							\
+static ssize_t rd1173_reg_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct spi_device *spi = to_spi_device(dev);
+	struct rd1173dev *rd1173dev = spi_get_drvdata(spi);
+	struct rd1173_reg_attribute *reg_attr;
+	unsigned long val;
+	int ret;
+
+	reg_attr = container_of(attr, struct rd1173_reg_attribute, dev_attr);
+
+	ret = kstrtoul(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	ret = regmap_write(rd1173dev->regmap, reg_attr->reg,
+			   (unsigned int)val);
+	if (ret)
+		return ret;
+
+	return count;
 }
 
-#define rd1173_attr_show(field, name, format_string, type)		\
-	rd1173_show_simple(field, name, format_string, (type))		\
-static DEVICE_ATTR(name, 0444, show_##name, NULL)
+static struct rd1173_reg_attribute dev_attr_i2c0_cfg = {
+	.dev_attr = __ATTR(i2c0_cfg, 0644, rd1173_reg_show,
+			   rd1173_reg_store),
+	.reg = RD1173_I2C0_CONFIG_REG,
+};
 
-#define rd1173_attr_rw(field, name, format_string, type)		\
-	rd1173_show_simple(field, name, format_string, (type))		\
-	rd1173_store_simple(field, name, 0)				\
-static DEVICE_ATTR(name, 0644, show_##name, store_##name)
+static struct rd1173_reg_attribute dev_attr_i2c1_cfg = {
+	.dev_attr = __ATTR(i2c1_cfg, 0644, rd1173_reg_show,
+			   rd1173_reg_store),
+	.reg = RD1173_I2C1_CONFIG_REG,
+};
 
-rd1173_attr_rw(RD1173_I2C0_CONFIG_REG, i2c0_cfg, "0x%02x\n", u32);
-rd1173_attr_rw(RD1173_I2C1_CONFIG_REG, i2c1_cfg, "0x%02x\n", u32);
-rd1173_attr_show(RD1173_I2C0_MODE_REG, i2c0_mode, "0x%02x\n", u32);
-rd1173_attr_show(RD1173_I2C1_MODE_REG, i2c1_mode, "0x%02x\n", u32);
-rd1173_attr_show(RD1173_I2C0_CMD_STAT_REG, i2c0_cmdstat, "0x%02x\n", u32);
-rd1173_attr_show(RD1173_I2C1_CMD_STAT_REG, i2c1_cmdstat, "0x%02x\n", u32);
-rd1173_attr_show(RD1173_FIFO_STATUS_REG, i2c_fifo_status, "0x%02x\n", u32);
+static struct rd1173_reg_attribute dev_attr_i2c0_mode = {
+	.dev_attr = __ATTR(i2c0_mode, 0444, rd1173_reg_show, NULL),
+	.reg = RD1173_I2C0_MODE_REG,
+};
+
+static struct rd1173_reg_attribute dev_attr_i2c1_mode = {
+	.dev_attr = __ATTR(i2c1_mode, 0444, rd1173_reg_show, NULL),
+	.reg = RD1173_I2C1_MODE_REG,
+};
+
+static struct rd1173_reg_attribute dev_attr_i2c0_cmdstat = {
+	.dev_attr = __ATTR(i2c0_cmdstat, 0444, rd1173_reg_show, NULL),
+	.reg = RD1173_I2C0_CMD_STAT_REG,
+};
+
+static struct rd1173_reg_attribute dev_attr_i2c1_cmdstat = {
+	.dev_attr = __ATTR(i2c1_cmdstat, 0444, rd1173_reg_show, NULL),
+	.reg = RD1173_I2C1_CMD_STAT_REG,
+};
+
+static struct rd1173_reg_attribute dev_attr_i2c_fifo_status = {
+	.dev_attr = __ATTR(i2c_fifo_status, 0444, rd1173_reg_show, NULL),
+	.reg = RD1173_FIFO_STATUS_REG,
+};
 
 static struct attribute *rd1173_attrs[] = {
-	&dev_attr_i2c0_cfg.attr,
-	&dev_attr_i2c1_cfg.attr,
-	&dev_attr_i2c0_mode.attr,
-	&dev_attr_i2c1_mode.attr,
-	&dev_attr_i2c0_cmdstat.attr,
-	&dev_attr_i2c1_cmdstat.attr,
-	&dev_attr_i2c_fifo_status.attr,
+	&dev_attr_i2c0_cfg.dev_attr.attr,
+	&dev_attr_i2c1_cfg.dev_attr.attr,
+	&dev_attr_i2c0_mode.dev_attr.attr,
+	&dev_attr_i2c1_mode.dev_attr.attr,
+	&dev_attr_i2c0_cmdstat.dev_attr.attr,
+	&dev_attr_i2c1_cmdstat.dev_attr.attr,
+	&dev_attr_i2c_fifo_status.dev_attr.attr,
 	NULL,
 };
 
@@ -276,33 +380,29 @@ static const struct chipdesc chip_rd1173 = {
 static irqreturn_t rd1173_irq_handler(int this_irq, void *data)
 {
 	struct rd1173dev *rd1173dev = data;
-	struct rd1173_i2c_adapter *i2c0 = &rd1173dev->i2c_adap[0];
-	struct rd1173_i2c_adapter *i2c1 = &rd1173dev->i2c_adap[1];
+	struct rd1173_i2c_adapter *i2c;
 	int rc;
 
-	if (rd1173dev->active_port == 1) {
-		rc = regmap_read(rd1173dev->regmap,
-				 i2c0->offset + RD1173_CMD_STAT_REG,
-				 &i2c0->state);
-		if (rc)
-			return IRQ_NONE;
+	if (rd1173dev->active_port >= 2)
+		return IRQ_NONE;
 
-		if (i2c0->state & RD1173_STAT_TS) {
-			complete(&i2c0->rd1173dev->completion);
-			return IRQ_HANDLED;
-		}
-	} else if (rd1173dev->active_port == 2) {
-		rc = regmap_read(rd1173dev->regmap,
-				 i2c1->offset + RD1173_CMD_STAT_REG,
-				 &i2c1->state);
-		if (rc)
-			return IRQ_NONE;
+	i2c = &rd1173dev->i2c_adap[rd1173dev->active_port];
 
-		if (i2c1->state & RD1173_STAT_TS) {
-			complete(&i2c1->rd1173dev->completion);
-			return IRQ_HANDLED;
-		}
+	rc = regmap_read(rd1173dev->regmap,
+			 i2c->offset + RD1173_CMD_STAT_REG,
+			 &i2c->state);
+
+	if (rc)
+		return IRQ_NONE;
+
+	if (i2c->state & RD1173_STAT_TS) {
+		complete(&rd1173dev->completion);
+		return IRQ_HANDLED;
 	}
+
+	if (i2c->state == 0)
+		return IRQ_HANDLED;
+
 	return IRQ_NONE;
 }
 
@@ -350,7 +450,7 @@ static int reg_write(void *context, unsigned int reg, unsigned int val)
 	return spi_write(spi, txbuffer, sizeof(txbuffer));
 }
 
-static struct regmap_bus regmap_rd1173_bus = {
+static const struct regmap_bus regmap_rd1173_bus = {
 	.reg_write = reg_write,
 	.reg_read = reg_read,
 	.reg_format_endian_default = REGMAP_ENDIAN_BIG,
@@ -574,128 +674,124 @@ static void update_i2c_stats(struct rd1173_i2c_adapter *i2c, int readop)
  *
  * Returns the number of messages processed, or a negative errno on failure.
  */
-static int rd1173_xfer(struct i2c_adapter *i2c_adap, struct i2c_msg *msgs, int num)
+static int rd1173_xfer(struct i2c_adapter *adap,
+		       struct i2c_msg *msgs, int num)
 {
-	struct rd1173_i2c_adapter *i2c = i2c_get_adapdata(i2c_adap);
+	struct rd1173_i2c_adapter *i2c = i2c_get_adapdata(adap);
 	struct device *dev = &i2c->rd1173dev->spi->dev;
-	u8 max_len = i2c->rd1173dev->chip->buffer_size;
-	int read_operation = 0;
-	u16 bytes_remaining;
-	u16 bytes_transferred;
-	u8 num_transfers;
-	u8 rx_fifo[9];
-	u8 cnt;
-	int rc = 0;
-	int i, j;
-
-	if (num > 2)
-		return -EOPNOTSUPP;
-
-	for (i = 0; i < num; i++) {
-		if (msgs[i].flags & I2C_M_RD) {
-			if (msgs[i].len > 256)
-				return -EOPNOTSUPP;
-			read_operation++;
-		} else {
-			/* Writes limited buffer size */
-			if (msgs[i].len > max_len)
-				return -EOPNOTSUPP;
-		}
-		dev_dbg(dev, "i2c%d msgs[%d]: addr 0x%x flags 0x%x len %d\n",
-			i2c->i2c_adap.nr - 1, i, msgs[i].addr, msgs[i].flags,
-			msgs[i].len);
-	}
+	int i, ret = 0;
+	u32 state;
 
 	if (mutex_lock_interruptible(&i2c->rd1173dev->xfer_active))
 		return -ERESTARTSYS;
 
-	reinit_completion(&i2c->rd1173dev->completion);
-	i2c->rd1173dev->active_port = i2c->i2c_adap.nr;
+	i2c->rd1173dev->active_port = i2c->i2c_master;
 
 	for (i = 0; i < num; i++) {
-		rd1173_fifo_clear(i2c);
-		rd1173_clear_cmdstat(i2c);
+		struct i2c_msg *msg = &msgs[i];
+		bool readop = !!(msg->flags & I2C_M_RD);
+		struct i2c_msg sub = *msg;
+		int remaining = msg->len;
+		int offset = 0;
 
-		bytes_transferred = 0;
-		bytes_remaining = msgs[i].len;
-		num_transfers = (bytes_remaining + max_len - 1) / max_len;
+		dev_dbg(dev, "i2c%d xfer: %s addr=0x%02x len=%d\n",
+			i2c->rd1173dev->active_port,
+			readop ? "RD" : "WR",
+			msg->addr, msg->len);
 
-		for (j = 0; j < num_transfers; j++) {
+		while (remaining > 0) {
+			int chunk = min(remaining, 8);
+			u8 tmp[9]; /* status + data */
+
+			/* Prepare hardware for THIS chunk */
 			rd1173_fifo_clear(i2c);
 			rd1173_clear_cmdstat(i2c);
 
-			if (bytes_remaining > max_len)
-				cnt = max_len;
-			else
-				cnt = bytes_remaining;
+			reinit_completion(&i2c->rd1173dev->completion);
 
-			if (msgs[i].flags & I2C_M_RD) {
-				dev_dbg(dev, "i2c%d read addr 0x%x len %d\n",
-					i2c->i2c_adap.nr - 1, msgs[i].addr,
-					msgs[i].len);
-				rc = rd1173_read(i2c, &msgs[i], cnt);
+			if (readop) {
+				sub.len = chunk;
+				ret = rd1173_read(i2c, &sub, chunk);
 			} else {
-				dev_dbg(dev, "i2c%d write addr 0x%x len %d\n",
-					i2c->i2c_adap.nr - 1, msgs[i].addr,
-					msgs[i].len);
-				rc = rd1173_write(i2c, &msgs[i], cnt);
+				sub.len = chunk;
+				sub.buf = msg->buf + offset;
+				ret = rd1173_write(i2c, &sub, chunk);
 			}
 
-			rc = wait_for_completion_timeout(&i2c->rd1173dev->completion,
-							 i2c->i2c_adap.timeout);
-
-			update_i2c_stats(i2c, msgs[i].flags & I2C_M_RD);
-
-			if (!rc && i2c->state != RD1173_STAT_TS)
-				dev_dbg(dev, "i2c%d cmdstat 0x%02x\n",
-					i2c->i2c_adap.nr - 1, i2c->state);
-
-			if (!rc || i2c->state != RD1173_STAT_TS)
-				goto done;
-
-			if (msgs[i].flags & I2C_M_RD) {
-				rc = rd1173_read_buffer(i2c, rx_fifo, cnt);
-				if (rc)
-					goto done;
-
-				memcpy((u8 *)(msgs[i].buf + bytes_transferred),
-				       &rx_fifo[1], cnt);
-
-				bytes_remaining -= cnt;
-				bytes_transferred += cnt;
+			if (ret) {
+				dev_err(dev, "RD1173: failed to issue %s\n",
+					readop ? "read" : "write");
+				goto out_unlock;
 			}
+
+			/* Wait for TS interrupt */
+			ret = wait_for_completion_timeout(
+					&i2c->rd1173dev->completion,
+					i2c->i2c_adap.timeout);
+
+			if (ret == 0) {
+				dev_err(dev, "RD1173: timeout waiting for completion\n");
+				ret = -ETIMEDOUT;
+				goto out_unlock;
+			}
+
+			/* Read final status */
+			ret = regmap_read(i2c->rd1173dev->regmap,
+					  i2c->offset + RD1173_CMD_STAT_REG,
+					  &state);
+			if (ret) {
+				dev_err(dev, "RD1173: failed to read CMD_STAT\n");
+				goto out_unlock;
+			}
+
+			i2c->state = state;
+			update_i2c_stats(i2c, readop);
+
+			/* Check for errors */
+			if (state & RD1173_STAT_NO_ANS) {
+				dev_info(dev, "RD1173: NO_ANS state=0x%02x\n", state);
+				ret = -ENXIO;
+				goto out_unlock;
+			}
+
+			if (state & RD1173_STAT_NO_ACK)
+				dev_dbg(dev, "RD1173: NO_ACK state=0x%02x\n", state);
+
+			if (state & RD1173_STAT_TX_ERR)
+				dev_dbg(dev, "RD1173: TX_ERR state=0x%02x\n", state);
+
+			if (state & RD1173_STAT_RX_ERR) {
+				dev_err(dev, "RD1173: RX_ERR state=0x%02x\n", state);
+				ret = -EIO;
+				goto out_unlock;
+			}
+
+			/* Read FIFO */
+			if (readop) {
+				ret = rd1173_read_buffer(i2c, tmp, chunk);
+				if (ret) {
+					dev_err(dev, "RD1173: read_buffer failed\n");
+					goto out_unlock;
+				}
+
+				memcpy(msg->buf + offset, tmp + 1, chunk);
+			}
+
+			remaining -= chunk;
+			offset += chunk;
 		}
 	}
 
-done:
-	rd1173_clear_cmdstat(i2c);
-	switch (i2c->state) {
-	case RD1173_STAT_TS:
-		rc = num;        /* transfer complete */
-		break;
-	case RD1173_STAT_I2C_BUSY:
-		rd1173_reset(i2c);
-		rc = -EAGAIN;
-		break;
-	case RD1173_STAT_NO_ANS:
-		rc = -ENXIO;
-		break;
-	case RD1173_STAT_NO_ACK:
-		rc = -EREMOTEIO;
-		break;
-	case RD1173_STAT_TX_ERR:
-	case RD1173_STAT_RX_ERR:
-	case RD1173_STAT_ABORT_ACK:
-		rd1173_reset(i2c);
-		rc = -EAGAIN;
-		break;
-	default:
-		rc = -EAGAIN;
-	}
+	ret = num;
 
-	i2c->rd1173dev->active_port = 0;
+out_unlock:
+	rd1173_clear_cmdstat(i2c);
+
+	if (ret < 0 || (i2c->state & RD1173_RESET_ERRORS))
+		rd1173_reset(i2c);
+
 	mutex_unlock(&i2c->rd1173dev->xfer_active);
-	return rc;
+	return ret;
 }
 
 static u32 rd1173_func(struct i2c_adapter *adap)
@@ -712,7 +808,8 @@ static int rd1173_probe(struct spi_device *spi)
 {
 	struct rd1173dev *rd1173dev;
 	struct rd1173_i2c_adapter *i2c;
-	int i, rc;
+	struct gpio_desc *irq_gpiod;
+	int i, rc, irq;
 
 	rd1173dev = devm_kzalloc(&spi->dev, sizeof(*rd1173dev), GFP_KERNEL);
 	if (!rd1173dev)
@@ -735,7 +832,6 @@ static int rd1173_probe(struct spi_device *spi)
 		i2c->i2c_adap.owner = THIS_MODULE;
 		i2c->i2c_adap.class = I2C_CLASS_DEPRECATED;
 		i2c->i2c_adap.timeout = msecs_to_jiffies(100);
-		i2c->i2c_adap.nr = PORT1_I2C_BUS_NUM + i;
 
 		if (i == 0)
 			i2c->offset = RD1173_I2C0_CONFIG_REG;
@@ -764,17 +860,7 @@ static int rd1173_probe(struct spi_device *spi)
 		return rc;
 	}
 
-
 	mutex_init(&rd1173dev->xfer_active);
-
-	rc = devm_request_threaded_irq(&spi->dev, spi->irq, NULL,
-				       rd1173_irq_handler,
-				       IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
-				       "cpld-rd1173", rd1173dev);
-	if (rc) {
-		dev_err(&spi->dev, "Failed to request irq, err %d\n", rc);
-		return rc;
-	}
 
 	rc = spi_setup(spi);
 	if (rc) {
@@ -787,7 +873,8 @@ static int rd1173_probe(struct spi_device *spi)
 		rd1173_reset(i2c);
 		rd1173_fifo_clear(i2c);
 
-		rc = i2c_add_numbered_adapter(&i2c->i2c_adap);
+		i2c->i2c_adap.nr = -1;
+		rc = i2c_add_adapter(&i2c->i2c_adap);
 		if (rc) {
 			dev_err(&spi->dev, "error adding i2c adapter: %d\n", rc);
 			return rc;
@@ -804,12 +891,47 @@ static int rd1173_probe(struct spi_device *spi)
 	if (rc)
 		dev_warn(&spi->dev, "failed to create rd1173 sysfs files\n");
 
+	/* Check for Salina GPIO-based interrupt */
+	irq_gpiod = devm_gpiod_get_optional(&spi->dev, "interrupt", GPIOD_IN);
+
+	if (!IS_ERR(irq_gpiod) && irq_gpiod) {
+		gpiod_direction_input(irq_gpiod);
+		irq = gpiod_to_irq(irq_gpiod);
+		if (irq < 0)
+			return irq;
+
+		spi->irq = irq;
+	} else {
+		/* Fallback to legacy SPI IRQ (Elba) */
+		irq = spi->irq;
+
+		if (irq <= 0) {
+			dev_err(&spi->dev, "No valid IRQ found\n");
+			return -EINVAL;
+		}
+
+		dev_info(&spi->dev, "Using SPI IRQ %d\n", irq);
+	}
+
+	/* Now request it */
+	rc = devm_request_threaded_irq(&spi->dev, irq, NULL,
+					rd1173_irq_handler,
+					IRQF_TRIGGER_LOW | IRQF_ONESHOT | IRQF_SHARED,
+					"cpld-rd1173", rd1173dev);
+	if (rc) {
+		dev_err(&spi->dev, "Failed to request irq, err %d\n", rc);
+		return rc;
+	}
+
 	return 0;
 }
 
 static void rd1173_remove(struct spi_device *spi)
 {
 	struct rd1173dev *rd1173dev = spi_get_drvdata(spi);
+
+	sysfs_remove_group(&spi->dev.kobj, &rd1173_attr_group);
+	sysfs_remove_group(&spi->dev.kobj, &i2c_attr_group);
 
 	i2c_del_adapter(&rd1173dev->i2c_adap[0].i2c_adap);
 	i2c_del_adapter(&rd1173dev->i2c_adap[1].i2c_adap);
@@ -823,9 +945,16 @@ static const struct of_device_id rd1173_of_match[] = {
 MODULE_DEVICE_TABLE(of, rd1173_of_match);
 #endif
 
+static const struct spi_device_id rd1173_spi_ids[] = {
+	{ "pensando-cpld-rd1173" },
+	{},
+};
+MODULE_DEVICE_TABLE(spi, rd1173_spi_ids);
+
 static struct spi_driver rd1173_driver = {
-	.probe  = rd1173_probe,
+	.probe	= rd1173_probe,
 	.remove = rd1173_remove,
+	.id_table = rd1173_spi_ids,
 	.driver = {
 		.name  = "i2c-rd1173",
 		.of_match_table = of_match_ptr(rd1173_of_match),

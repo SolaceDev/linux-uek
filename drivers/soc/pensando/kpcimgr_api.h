@@ -20,10 +20,9 @@
 #include <linux/msi.h>
 #include <linux/mm.h>
 #include <linux/kallsyms.h>
-#include <linux/execmem.h>
+#include <linux/moduleloader.h>
 #include <linux/set_memory.h>
-#include <linux/vmalloc.h>
-#include <asm/cacheflush.h>
+#include <linux/cacheflush.h>
 #include <asm/insn.h>
 #endif
 
@@ -123,8 +122,7 @@ struct kpcimgr_state_t {
 	int code_offsets[K_NUM_ENTRIES];
 };
 
-typedef struct kpcimgr_state_t kstate_t;
-_Static_assert(sizeof(kstate_t) < SHMEM_KSTATE_SIZE,
+_Static_assert(sizeof(struct kpcimgr_state_t) < SHMEM_KSTATE_SIZE,
 	       "kstate size insufficient");
 
 /* trace_data[] elements */
@@ -159,15 +157,15 @@ extern spinlock_t kpcimgr_lock;
 #define reset_stats(k) \
 	kpci_memset((void *)&(k)->trace_data[0][0], 0, sizeof((k)->trace_data))
 
-static inline void set_init_state(kstate_t *k)
+static inline void set_init_state(struct kpcimgr_state_t *k)
 {
 	k->trace_data[NORMAL][FIRST_CALL_TIME] = 0;
 	k->ncalls = 0;
 }
 
-static inline kstate_t *get_kstate(void)
+static inline struct kpcimgr_state_t *get_kstate(void)
 {
-	extern kstate_t *kstate;
+	extern struct kpcimgr_state_t *kstate;
 	return kstate;
 }
 #endif

@@ -100,7 +100,7 @@
 		};
 
 		partition@6e00000 {
-			label = "spare";
+			label = "flashobfl";
 			reg = <0x6e00000 0x1200000>;
 		};
 
@@ -113,5 +113,12 @@
 			label = "ubootenv";
 			reg = <0xffe0000 0x10000>;
 		};
+	};
+};
+
+&soc {
+	panicdump@740b0000 {
+		compatible = "pensando,capri-crash";
+		reg = <0x0 0x740b0000 0x0 0x20000>;
 	};
 };

@@ -931,8 +931,7 @@ static void mlx5_cmd_comp_handler(struct mlx5_core_dev *dev, u64 vec, bool force
 
 static void cb_timeout_handler(struct work_struct *work)
 {
-	struct delayed_work *dwork = container_of(work, struct delayed_work,
-						  work);
+	struct delayed_work *dwork = to_delayed_work(work);
 	struct mlx5_cmd_work_ent *ent = container_of(dwork,
 						     struct mlx5_cmd_work_ent,
 						     cb_timeout_work);
@@ -2251,6 +2250,7 @@ int mlx5_cmd_alias_obj_create(struct mlx5_core_dev *dev,
 
 	attr = MLX5_ADDR_OF(create_alias_obj_in, in, alias_ctx);
 	MLX5_SET(alias_context, attr, vhca_id_to_be_accessed, alias_attr->vhca_id);
+	MLX5_SET(alias_context, attr, vhca_id_type, alias_attr->vhca_id_type);
 	MLX5_SET(alias_context, attr, object_id_to_be_accessed, alias_attr->obj_id);
 
 	key = MLX5_ADDR_OF(alias_context, attr, access_key);

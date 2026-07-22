@@ -19,8 +19,7 @@
 #include <linux/mfd/syscon.h>
 #include <linux/regmap.h>
 #include "cap_rstcause.h"
-
-struct kobject *pensando_fw_kobj_get(void);
+#include "cap_soc.h"
 
 struct cap_rstdev {
 	struct platform_device *pdev;

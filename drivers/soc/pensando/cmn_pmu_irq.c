@@ -70,7 +70,9 @@ static int salina_cmn_pmu_irq_probe(struct platform_device *pdev)
 		goto unmap_regs;
 	}
 
-	ret = request_irq(irq, cmn_pmu_irq_handler, IRQF_NOBALANCING | IRQF_NO_THREAD | IRQF_SHARED, "cmn_pmu_int", regs);
+	ret = request_irq(irq, cmn_pmu_irq_handler,
+			  IRQF_NOBALANCING | IRQF_NO_THREAD | IRQF_SHARED,
+			  "cmn_pmu_int", regs);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to request IRQ\n");
 		goto unmap_regs;

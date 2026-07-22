@@ -13,7 +13,9 @@
 #include <linux/of.h>
 #include <linux/fcntl.h>
 #include <linux/init.h>
+#include <linux/mm.h>
 #include <linux/pagemap.h>
+#include <linux/pgtable.h>
 #include <linux/sort.h>
 #include <linux/pfn_t.h>
 #include <dt-bindings/soc/pensando,capmem.h>
@@ -23,13 +25,6 @@
 #include "cap_tracepoint.h"
 
 #define CAPMEM_REGION_ALIGN		PMD_SIZE
-
-/* page entry size for vm->huge_fault() */
-enum page_entry_size {
-	PE_SIZE_PTE = 0,
-	PE_SIZE_PMD,
-	PE_SIZE_PUD,
-};
 
 /*
  * Memory range information provided by U-Boot on the kernel commandline:
@@ -155,20 +150,20 @@ static vm_fault_t cap_mem_pud_fault(struct vm_fault *vmf)
 #endif /* !CONFIG_HAVE_ARCH_TRANSPARENT_HUGEPAGE_PUD */
 
 static vm_fault_t cap_mem_huge_fault(struct vm_fault *vmf,
-		enum page_entry_size pe_size)
+				     unsigned int order)
 {
 	vm_fault_t rc;
 
 	trace_cap_mem_fault_enter(vmf->vma, vmf);
 
-	switch (pe_size) {
-	case PE_SIZE_PTE:
+	switch (order) {
+	case 0:
 		rc = cap_mem_pte_fault(vmf);
 		break;
-	case PE_SIZE_PMD:
+	case PMD_ORDER:
 		rc = cap_mem_pmd_fault(vmf);
 		break;
-	case PE_SIZE_PUD:
+	case PUD_ORDER:
 		rc = cap_mem_pud_fault(vmf);
 		break;
 	default:
@@ -182,7 +177,7 @@ static vm_fault_t cap_mem_huge_fault(struct vm_fault *vmf,
 
 static vm_fault_t cap_mem_fault(struct vm_fault *vmf)
 {
-	return cap_mem_huge_fault(vmf, PE_SIZE_PTE);
+	return cap_mem_huge_fault(vmf, 0);
 }
 
 static int cap_mem_may_split(struct vm_area_struct *vma, unsigned long addr)
@@ -220,7 +215,7 @@ static unsigned long cap_mem_get_unmapped_area(struct file *filp,
 
 	len_align = len + align;
 
-	addr = current->mm->get_unmapped_area(filp, addr, len_align, pgoff, flags);
+	addr = mm_get_unmapped_area(current->mm, filp, addr, len_align, pgoff, flags);
 	if (!IS_ERR_VALUE(addr)) {
 		addr_align = round_up(addr, align);
 		trace_cap_mem_get_unmapped_area_exit(addr_align, len_align, pgoff, align);
@@ -228,7 +223,7 @@ static unsigned long cap_mem_get_unmapped_area(struct file *filp,
 	}
 
 out:
-	addr = current->mm->get_unmapped_area(filp, addr, len, pgoff, flags);
+	addr = mm_get_unmapped_area(current->mm, filp, addr, len, pgoff, flags);
 	trace_cap_mem_get_unmapped_area_exit(addr, len, pgoff, align);
 	return addr;
 }

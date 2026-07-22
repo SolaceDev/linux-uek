@@ -56,4 +56,7 @@ struct penfw_time_attestation {
 
 void penfw_smc(struct penfw_call_args *args);
 
+extern void *penfwdata;
+extern phys_addr_t penfwdata_phys;
+
 #endif /* __PENFW_H__ */

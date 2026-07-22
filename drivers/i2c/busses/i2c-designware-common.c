@@ -586,6 +586,71 @@ void __i2c_dw_disable(struct dw_i2c_dev *dev)
 	dev_warn(dev->dev, "timeout in disabling adapter\n");
 }
 
+/**
+ * i2c_dw_switch_irq_handler - switch the IRQ handler when changing
+ * between master and slave mode.
+ */
+static int i2c_dw_switch_irq_handler(struct dw_i2c_dev *dev,
+				     irq_handler_t handler)
+{
+	int ret;
+
+	/* Free the old handler */
+	devm_free_irq(dev->dev, dev->irq, dev);
+
+	/* Register the new handler */
+	ret = devm_request_irq(dev->dev, dev->irq, handler,
+			       IRQF_SHARED | IRQF_COND_SUSPEND,
+			       dev_name(dev->dev), dev);
+	if (ret)
+		dev_err(dev->dev, "failed to switch IRQ handler: %d\n", ret);
+
+	return ret;
+}
+
+/**
+ * i2c_dw_set_mode - switch controller between master and slave mode
+ * @dev: device private data
+ * @mode: DW_IC_MASTER or DW_IC_SLAVE
+ *
+ * Required for MCTP-over-I2C
+ */
+int i2c_dw_set_mode(struct dw_i2c_dev *dev, int mode)
+{
+	irq_handler_t new_handler;
+	int ret;
+
+	if (dev->mode == mode)
+		return 0;
+
+	__i2c_dw_disable(dev);
+
+	if (mode == DW_IC_MASTER) {
+		i2c_dw_configure_master(dev);
+		i2c_dw_configure_fifo_master(dev);
+		new_handler = i2c_dw_isr;
+	} else {
+		i2c_dw_configure_slave(dev);
+		i2c_dw_configure_fifo_slave(dev);
+		new_handler = i2c_dw_isr_slave;
+	}
+
+	/*
+	 * If the IRQ handler swap fails the old handler has already been freed,
+	 * so leave the controller disabled rather than enabling it with no
+	 * serviceable interrupt and a mode that disagrees with dev->mode.
+	 */
+	ret = i2c_dw_switch_irq_handler(dev, new_handler);
+	if (ret)
+		return ret;
+
+	dev->mode = mode;
+	__i2c_dw_enable(dev);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(i2c_dw_set_mode);
+
 u32 i2c_dw_clk_rate(struct dw_i2c_dev *dev)
 {
 	/*

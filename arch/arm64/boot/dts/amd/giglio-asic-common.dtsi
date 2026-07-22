@@ -1,4 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
+/*
+ * Copyright 2020-2022 Advanced Micro Devices, Inc.
+ */
 
 #include <dt-bindings/reset/amd,pensando-elba-reset.h>
 
@@ -91,12 +94,6 @@
 &i2c3 {
 	clock-frequency = <100000>;
 	status = "okay";
-
-	/* MCTP slave default 0x64 is 0x32 7-bit address */
-	mctp@32 {
-		compatible = "snps,mctp";
-		reg = <0x40000032>;
-	};
 };
 
 &spi0 {

@@ -14,7 +14,7 @@ static ssize_t valid_show(struct device *dev,
 			  struct device_attribute *attr,
 			  char *buf)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	return sprintf(buf, "%x\n", ks->valid);
 }
@@ -25,7 +25,7 @@ static ssize_t valid_store(struct device *dev,
 			   const char *buf,
 			   size_t count)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	if (ks->running) {
 		kpcimgr_stop_running();
@@ -47,7 +47,7 @@ static ssize_t running_show(struct device *dev,
 			    struct device_attribute *attr,
 			    char *buf)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	return sprintf(buf, "%x\n", ks->running | ks->debug);
 }
@@ -57,7 +57,7 @@ static ssize_t running_store(struct device *dev,
 			     const char *buf,
 			     size_t count)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 	ssize_t rc;
 	long val;
 
@@ -92,7 +92,7 @@ static ssize_t cfgval_show(struct device *dev,
 			   struct device_attribute *attr,
 			   char *buf)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	return sprintf(buf, "%x\n", ks->cfgval);
 }
@@ -102,7 +102,7 @@ static ssize_t cfgval_store(struct device *dev,
 			    const char *buf,
 			    size_t count)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 	ssize_t rc;
 	long val;
 
@@ -121,7 +121,7 @@ static ssize_t lib_version_show(struct device *dev,
 				struct device_attribute *attr,
 				char *buf)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	if (!ks->valid)
 		return -ENODEV;
@@ -141,8 +141,9 @@ static ssize_t command_read(struct file *file, struct kobject *kobj,
 			    struct bin_attribute *attr, char *out,
 			    loff_t off, size_t count)
 {
-	int (*cmd_read)(kstate_t *, char *, loff_t, size_t, int *);
-	kstate_t *ks = get_kstate();
+	int (*cmd_read)(struct kpcimgr_state_t *ks, char *buf,
+			loff_t off, size_t count, int *success);
+	struct kpcimgr_state_t *ks = get_kstate();
 	int ret, success = 0;
 	unsigned long flags;
 
@@ -164,8 +165,9 @@ static ssize_t command_write(struct file *filp, struct kobject *kobj,
 			     struct bin_attribute *bin_attr, char *buf,
 			     loff_t off, size_t count)
 {
-	int (*cmd_write)(kstate_t *, const char *, loff_t, size_t, int *);
-	kstate_t *ks = get_kstate();
+	int (*cmd_write)(struct kpcimgr_state_t *ks, const char *buf,
+			 loff_t off, size_t count, int *success);
+	struct kpcimgr_state_t *ks = get_kstate();
 	int ret, success = 0;
 	unsigned long flags;
 
@@ -188,7 +190,7 @@ static ssize_t event_queue_read(struct file *file, struct kobject *kobj,
 				struct bin_attribute *attr, char *out,
 				loff_t off, size_t count)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	/* is queue empty? */
 	if (ks->evq_head == ks->evq_tail)
@@ -206,7 +208,7 @@ static ssize_t event_queue_write(struct file *filp, struct kobject *kobj,
 				 struct bin_attribute *bin_attr, char *buf,
 				 loff_t off, size_t count)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	if (count != EVENT_SIZE)
 		return -EINVAL;
@@ -225,7 +227,7 @@ static ssize_t kstate_read(struct file *file, struct kobject *kobj,
 			   struct bin_attribute *attr, char *out,
 			   loff_t off, size_t count)
 {
-	kstate_t *ks = get_kstate();
+	struct kpcimgr_state_t *ks = get_kstate();
 
 	kpci_memcpy(out, (void *)ks + off, count);
 	return count;
@@ -237,7 +239,7 @@ static DEVICE_ATTR_RW(cfgval);
 static DEVICE_ATTR_RO(lib_version);
 static DEVICE_ATTR_RO(mgr_version);
 static DEVICE_INT_ATTR(active_port, 0644, kpcimgr_active_port);
-static BIN_ATTR_RO(kstate, sizeof(kstate_t));
+static BIN_ATTR_RO(kstate, sizeof(struct kpcimgr_state_t));
 static BIN_ATTR_RW(event_queue, EVENT_SIZE);
 static BIN_ATTR_RW(command, CMD_SIZE);
 
