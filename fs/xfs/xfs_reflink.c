@@ -389,7 +389,6 @@ xfs_reflink_fill_cow_hole(
 	struct xfs_mount	*mp = ip->i_mount;
 	struct xfs_trans	*tp;
 	xfs_filblks_t		resaligned;
-	unsigned int		seq_before = READ_ONCE(ip->i_df.if_seq);
 	xfs_extlen_t		resblks;
 	unsigned int		seq_before = READ_ONCE(ip->i_df.if_seq);
 	int			nimaps;
