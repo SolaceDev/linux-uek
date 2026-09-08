@@ -21,12 +21,14 @@
 #include <linux/slab.h>
 #include <linux/timekeeping.h>
 
+#define ADM1266_IC_DEVICE_REV	0xAE
 #define ADM1266_BLACKBOX_CONFIG	0xD3
 #define ADM1266_PDIO_CONFIG	0xD4
 #define ADM1266_READ_STATE	0xD9
 #define ADM1266_READ_BLACKBOX	0xDE
 #define ADM1266_SET_RTC		0xDF
 #define ADM1266_GPIO_CONFIG	0xE1
+#define ADM1266_POWERUP_COUNTER	0xE4
 #define ADM1266_BLACKBOX_INFO	0xE6
 #define ADM1266_PDIO_STATUS	0xE9
 #define ADM1266_GPIO_STATUS	0xEA
@@ -173,7 +175,12 @@ static int adm1266_gpio_get(struct gpio_chip *chip, unsigned int offset)
 	else
 		pmbus_cmd = ADM1266_PDIO_STATUS;
 
+	ret = pmbus_lock_interruptible(data->client);
+	if (ret)
+		return ret;
+
 	ret = i2c_smbus_read_block_data(data->client, pmbus_cmd, read_buf);
+	pmbus_unlock(data->client);
 	if (ret < 0)
 		return ret;
 	if (ret < 2)
@@ -195,11 +202,19 @@ static int adm1266_gpio_get_multiple(struct gpio_chip *chip, unsigned long *mask
 	unsigned int gpio_nr;
 	int ret;
 
-	ret = i2c_smbus_read_block_data(data->client, ADM1266_GPIO_STATUS, read_buf);
-	if (ret < 0)
+	ret = pmbus_lock_interruptible(data->client);
+	if (ret)
 		return ret;
-	if (ret < 2)
+
+	ret = i2c_smbus_read_block_data(data->client, ADM1266_GPIO_STATUS, read_buf);
+	if (ret < 0) {
+		pmbus_unlock(data->client);
+		return ret;
+	}
+	if (ret < 2) {
+		pmbus_unlock(data->client);
 		return -EIO;
+	}
 
 	status = read_buf[0] + (read_buf[1] << 8);
 
@@ -210,10 +225,14 @@ static int adm1266_gpio_get_multiple(struct gpio_chip *chip, unsigned long *mask
 	}
 
 	ret = i2c_smbus_read_block_data(data->client, ADM1266_PDIO_STATUS, read_buf);
-	if (ret < 0)
+	if (ret < 0) {
+		pmbus_unlock(data->client);
 		return ret;
-	if (ret < 2)
+	}
+	if (ret < 2) {
+		pmbus_unlock(data->client);
 		return -EIO;
+	}
 
 	status = read_buf[0] + (read_buf[1] << 8);
 
@@ -221,6 +240,8 @@ static int adm1266_gpio_get_multiple(struct gpio_chip *chip, unsigned long *mask
 		if (test_bit(gpio_nr - ADM1266_GPIO_NR, &status))
 			set_bit(gpio_nr, bits);
 	}
+
+	pmbus_unlock(data->client);
 
 	return 0;
 }
@@ -236,11 +257,16 @@ static void adm1266_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 	int ret;
 	int i;
 
+	if (pmbus_lock_interruptible(data->client))
+		return;
+
 	for (i = 0; i < ADM1266_GPIO_NR; i++) {
 		write_cmd = adm1266_gpio_mapping[i][1];
 		ret = adm1266_pmbus_block_xfer(data, ADM1266_GPIO_CONFIG, 1, &write_cmd, read_buf);
-		if (ret != 2)
+		if (ret != 2) {
+			pmbus_unlock(data->client);
 			return;
+		}
 
 		gpio_config = read_buf[0];
 		seq_puts(s, adm1266_names[i]);
@@ -262,8 +288,10 @@ static void adm1266_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 
 	write_cmd = 0xFF;
 	ret = adm1266_pmbus_block_xfer(data, ADM1266_PDIO_CONFIG, 1, &write_cmd, read_buf);
-	if (ret != 32)
+	if (ret != 32) {
+		pmbus_unlock(data->client);
 		return;
+	}
 
 	for (i = 0; i < ADM1266_PDIO_NR; i++) {
 		seq_puts(s, adm1266_names[ADM1266_GPIO_NR + i]);
@@ -286,6 +314,8 @@ static void adm1266_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 
 		seq_puts(s, ")\n");
 	}
+
+	pmbus_unlock(data->client);
 }
 
 static int adm1266_config_gpio(struct adm1266_data *data)
@@ -328,7 +358,12 @@ static int adm1266_state_read(struct seq_file *s, void *pdata)
 	struct i2c_client *client = to_i2c_client(dev);
 	int ret;
 
+	ret = pmbus_lock_interruptible(client);
+	if (ret)
+		return ret;
+
 	ret = i2c_smbus_read_word_data(client, ADM1266_READ_STATE);
+	pmbus_unlock(client);
 	if (ret < 0)
 		return ret;
 
@@ -336,6 +371,174 @@ static int adm1266_state_read(struct seq_file *s, void *pdata)
 
 	return 0;
 }
+
+/*
+ * IC_DEVICE_REV (0xAE) returns an 8-byte block (datasheet Rev. D, Table 80):
+ *   [2:0] firmware revision  major.minor.patch
+ *   [5:3] bootloader revision major.minor.patch
+ *   [7:6] silicon revision    two ASCII characters
+ */
+static int adm1266_firmware_revision_read(struct seq_file *s, void *pdata)
+{
+	struct device *dev = s->private;
+	struct i2c_client *client = to_i2c_client(dev);
+	u8 buf[I2C_SMBUS_BLOCK_MAX];
+	int ret;
+
+	ret = pmbus_lock_interruptible(client);
+	if (ret)
+		return ret;
+
+	ret = i2c_smbus_read_block_data(client, ADM1266_IC_DEVICE_REV, buf);
+	pmbus_unlock(client);
+	if (ret < 0)
+		return ret;
+	if (ret < 3)
+		return -EIO;
+
+	seq_printf(s, "%u.%u.%u\n", buf[0], buf[1], buf[2]);
+
+	return 0;
+}
+
+/*
+ * POWERUP_COUNTER (0xE4) is a 2-byte little-endian non-volatile counter
+ * that increments on every device power cycle (datasheet Rev. D, Table
+ * 93). It saturates at 65535 and cannot be reset by the host. Each
+ * blackbox record embeds the counter value at record time, so this live
+ * read is mainly useful for matching a record back to its boot.
+ */
+static int adm1266_powerup_counter_read(struct seq_file *s, void *pdata)
+{
+	struct device *dev = s->private;
+	struct i2c_client *client = to_i2c_client(dev);
+	u8 buf[I2C_SMBUS_BLOCK_MAX];
+	int ret;
+
+	ret = pmbus_lock_interruptible(client);
+	if (ret)
+		return ret;
+	ret = i2c_smbus_read_block_data(client, ADM1266_POWERUP_COUNTER, buf);
+	pmbus_unlock(client);
+	if (ret < 0)
+		return ret;
+	if (ret != 2)
+		return -EIO;
+
+	seq_printf(s, "%u\n", buf[0] | (buf[1] << 8));
+
+	return 0;
+}
+
+/*
+ * Clearing the blackbox is required when the device is configured in
+ * single-recording mode (BLACKBOX_CONFIG[0] = 0): once the 32-record
+ * buffer is full the device stops recording until cleared.
+ *
+ * The clear is issued as a 2-byte block-write to READ_BLACKBOX with
+ * payload {0xFE, 0x00} per the datasheet. READ_BLACKBOX is also used
+ * by adm1266_nvmem_read_blackbox() to walk records one at a time;
+ * both paths run under pmbus_lock so the clear cannot interleave
+ * mid-iteration and corrupt the read sequence.
+ */
+static ssize_t adm1266_clear_blackbox_write(struct file *file, const char __user *ubuf,
+					    size_t count, loff_t *ppos)
+{
+	struct i2c_client *client = file->private_data;
+	u8 payload[2] = { 0xFE, 0x00 };
+	int ret;
+
+	ret = pmbus_lock_interruptible(client);
+	if (ret)
+		return ret;
+
+	ret = i2c_smbus_write_block_data(client, ADM1266_READ_BLACKBOX,
+					 sizeof(payload), payload);
+	pmbus_unlock(client);
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static const struct file_operations adm1266_clear_blackbox_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.write = adm1266_clear_blackbox_write,
+	.llseek = noop_llseek,
+};
+
+/*
+ * SET_RTC (0xDF) is a 6-byte block (datasheet Rev. D, Table 84):
+ *   bytes [1:0] - fractional seconds (1/65536 s, written as zero)
+ *   bytes [5:2] - seconds since 1970-01-01 UTC, little-endian
+ *
+ * The driver seeds it once at probe via adm1266_rtc_set().  Over a
+ * long uptime the chip's counter drifts away from host wall-clock,
+ * so expose it via debugfs:
+ *
+ *   read  -- returns the chip's current seconds counter, which lets
+ *            userspace observe host-vs-chip drift.
+ *   write -- the kernel re-reads ktime_get_real_seconds() and writes
+ *            it to SET_RTC.  The write payload is ignored; userspace
+ *            does not get to supply its own timestamp value, so
+ *            there is no way to push a wrong time into the chip.
+ *
+ * A small userspace agent (chrony hook, systemd-timesyncd script,
+ * or a periodic cron job) can write to this file to keep the
+ * timestamp embedded in each blackbox record aligned with
+ * wall-clock across long uptimes.
+ */
+static int adm1266_rtc_get(void *data, u64 *val)
+{
+	struct i2c_client *client = data;
+	u8 buf[I2C_SMBUS_BLOCK_MAX];
+	u32 seconds = 0;
+	int ret, i;
+
+	ret = pmbus_lock_interruptible(client);
+	if (ret)
+		return ret;
+
+	ret = i2c_smbus_read_block_data(client, ADM1266_SET_RTC, buf);
+	pmbus_unlock(client);
+	if (ret < 0)
+		return ret;
+	if (ret < 6)
+		return -EIO;
+
+	for (i = 0; i < 4; i++)
+		seconds |= (u32)buf[2 + i] << (i * 8);
+
+	*val = seconds;
+
+	return 0;
+}
+
+static int adm1266_rtc_set(void *data, u64 val)
+{
+	struct i2c_client *client = data;
+	time64_t kt = ktime_get_real_seconds();
+	u8 write_buf[6] = { 0 };
+	int ret, i;
+
+	/* User-supplied @val is ignored on purpose; the kernel owns the
+	 * time source so userspace cannot push a wrong value into the chip.
+	 */
+	for (i = 0; i < 4; i++)
+		write_buf[2 + i] = (kt >> (i * 8)) & 0xFF;
+
+	ret = pmbus_lock_interruptible(client);
+	if (ret)
+		return ret;
+
+	ret = i2c_smbus_write_block_data(client, ADM1266_SET_RTC,
+					 sizeof(write_buf), write_buf);
+	pmbus_unlock(client);
+	return ret;
+}
+DEFINE_DEBUGFS_ATTRIBUTE(adm1266_rtc_fops,
+			 adm1266_rtc_get, adm1266_rtc_set, "%llu\n");
 
 static void adm1266_init_debugfs(struct adm1266_data *data)
 {
@@ -349,6 +552,14 @@ static void adm1266_init_debugfs(struct adm1266_data *data)
 
 	debugfs_create_devm_seqfile(&data->client->dev, "sequencer_state", data->debugfs_dir,
 				    adm1266_state_read);
+	debugfs_create_devm_seqfile(&data->client->dev, "firmware_revision", data->debugfs_dir,
+				    adm1266_firmware_revision_read);
+	debugfs_create_devm_seqfile(&data->client->dev, "powerup_counter", data->debugfs_dir,
+				    adm1266_powerup_counter_read);
+	debugfs_create_file("clear_blackbox", 0200, data->debugfs_dir, data->client,
+			    &adm1266_clear_blackbox_fops);
+	debugfs_create_file("rtc", 0600, data->debugfs_dir, data->client,
+			    &adm1266_rtc_fops);
 }
 
 static int adm1266_nvmem_read_blackbox(struct adm1266_data *data, u8 *read_buff)
@@ -393,17 +604,24 @@ static int adm1266_nvmem_read(void *priv, unsigned int offset, void *val, size_t
 	if (offset + bytes > data->nvmem_config.size)
 		return -EINVAL;
 
+	ret = pmbus_lock_interruptible(data->client);
+	if (ret)
+		return ret;
+
 	if (offset == 0) {
 		memset(data->dev_mem, 0, data->nvmem_config.size);
 
 		ret = adm1266_nvmem_read_blackbox(data, data->dev_mem);
 		if (ret) {
 			dev_err(&data->client->dev, "Could not read blackbox!");
+			pmbus_unlock(data->client);
 			return ret;
 		}
 	}
 
 	memcpy(val, data->dev_mem + offset, bytes);
+
+	pmbus_unlock(data->client);
 
 	return 0;
 }
@@ -436,23 +654,6 @@ static int adm1266_config_nvmem(struct adm1266_data *data)
 	return 0;
 }
 
-static int adm1266_set_rtc(struct adm1266_data *data)
-{
-	time64_t kt;
-	char write_buf[6];
-	int i;
-
-	kt = ktime_get_real_seconds();
-
-	memset(write_buf, 0, sizeof(write_buf));
-
-	for (i = 0; i < 4; i++)
-		write_buf[2 + i] = (kt >> (i * 8)) & 0xFF;
-
-	return i2c_smbus_write_block_data(data->client, ADM1266_SET_RTC, sizeof(write_buf),
-					  write_buf);
-}
-
 static int adm1266_probe(struct i2c_client *client)
 {
 	struct adm1266_data *data;
@@ -472,12 +673,12 @@ static int adm1266_probe(struct i2c_client *client)
 	crc8_populate_msb(pmbus_crc_table, 0x7);
 	mutex_init(&data->buf_mutex);
 
-	ret = adm1266_set_rtc(data);
-	if (ret < 0)
-		return ret;
-
 	ret = pmbus_do_probe(client, &data->info);
 	if (ret)
+		return ret;
+
+	ret = adm1266_rtc_set(client, 0);
+	if (ret < 0)
 		return ret;
 
 	ret = adm1266_config_nvmem(data);

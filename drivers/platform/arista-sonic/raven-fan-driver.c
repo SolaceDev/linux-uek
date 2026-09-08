@@ -123,8 +123,7 @@ static u8 get_fan_id(struct device *dev, struct device_attribute *attr)
    u8 *reg_id = pdata->gpio_base + FAN_ID_BASE_ADDR + FAN_ID_ADDR_OFFSET * fan_id;
    u8 res = 0;
    for(num_id = 0; num_id < NUM_FAN_ID_PINS; num_id++) {
-      reg_id += num_id;
-      res |= ((ioread8(reg_id) >> 7) & 0x1) << num_id;
+      res |= ((ioread8(reg_id + num_id) >> 7) & 0x1) << num_id;
    }
    return res;
 }
@@ -141,7 +140,7 @@ static ssize_t show_fan_airflow(struct device *dev, struct device_attribute *att
                                 char *buf)
 {
    u8 id = get_fan_id(dev, attr);
-   return sprintf(buf, "%s\n", (id & 0x4) ? "reverse" : "forward");
+   return sysfs_emit(buf, "%s\n", (id & 0x4) ? "reverse" : "forward");
 }
 
 static int read_led(struct raven_pdata *pdata, int fan_id, u8 *value)
@@ -477,6 +476,10 @@ static s32 sb_fan_probe(struct platform_device *pdev)
       goto fail_request_pm_region;
    }
    pdata->pm2_base = ioremap(SB800_PM2_BASE, SB800_PM2_SIZE );
+   if (!pdata->pm2_base) {
+      ret = -ENOMEM;
+      goto fail_request_gpio_region;
+   }
 
    if (!request_mem_region(SB800_GPIO_BASE, SB800_GPIO_SIZE, "SB800_GPIO")) {
       dev_err(&pdev->dev, "Failed request_mem_region in SB GPIO initialization");
@@ -484,6 +487,10 @@ static s32 sb_fan_probe(struct platform_device *pdev)
       goto fail_request_gpio_region;
    }
    pdata->gpio_base = ioremap(SB800_GPIO_BASE, SB800_GPIO_SIZE);
+   if (!pdata->gpio_base) {
+      ret = -ENOMEM;
+      goto fail_hwmon_register;
+   }
 
    pdata->hwmon_dev = hwmon_device_register_with_groups(&pdev->dev, "fans", NULL,
                                                         fan_groups);

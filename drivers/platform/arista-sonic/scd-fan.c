@@ -402,10 +402,10 @@ static ssize_t scd_fan_pwm_show(struct device *dev, struct device_attribute *da,
    struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
    struct scd_fan_group *group = dev_get_drvdata(dev);
    u32 address = FAN_SPEED_TYPE_ADDR(group, attr->index, pwm);
-   u32 reg = scd_read_register(group->ctx->pdev, address);
+   u32 reg = scd_read_register(group->ctx->dev, address);
 
    reg &= group->platform->mask_pwm;
-   return sprintf(buf, "%u\n", reg);
+   return sysfs_emit(buf, "%u\n", reg);
 }
 
 static ssize_t scd_fan_pwm_store(struct device *dev, struct device_attribute *da,
@@ -419,7 +419,7 @@ static ssize_t scd_fan_pwm_store(struct device *dev, struct device_attribute *da
    if (kstrtou8(buf, 0, &val))
       return -EINVAL;
 
-   scd_write_register(group->ctx->pdev, address, val);
+   scd_write_register(group->ctx->dev, address, val);
    return count;
 }
 
@@ -431,18 +431,18 @@ static ssize_t scd_fan_present_show(struct device *dev,
    struct scd_fan_group *group = dev_get_drvdata(dev);
    struct scd_fan *fan = to_scd_fan_attr(attr)->fan;
    u32 address = FAN_ADDR(group, present);
-   u32 reg = scd_read_register(group->ctx->pdev, address);
+   u32 reg = scd_read_register(group->ctx->dev, address);
 
    if (!FAN_HAS_REG(group, present)) {
-      return sprintf(buf, "1\n");
+      return sysfs_emit(buf, "1\n");
    }
-   return sprintf(buf, "%u\n", !!(reg & (1 << fan->index)));
+   return sysfs_emit(buf, "%u\n", !!(reg & (1 << fan->index)));
 }
 
 static u32 scd_fan_id_read(struct scd_fan_group *fan_group, u32 index)
 {
    u32 address = FAN_ADDR_2(fan_group, id, index);
-   u32 reg = scd_read_register(fan_group->ctx->pdev, address);
+   u32 reg = scd_read_register(fan_group->ctx->dev, address);
 
    reg &= fan_group->platform->mask_id;
    return reg;
@@ -456,13 +456,13 @@ static ssize_t scd_fan_id_show(struct device *dev, struct device_attribute *da,
    struct scd_fan *fan = to_scd_fan_attr(attr)->fan;
    u32 reg = scd_fan_id_read(group, fan->index);
 
-   return sprintf(buf, "%u\n", reg);
+   return sysfs_emit(buf, "%u\n", reg);
 }
 
 static u32 scd_fan_size_read(struct scd_fan_group *fan_group)
 {
    u32 address = FAN_ADDR(fan_group, size);
-   u32 reg = scd_read_register(fan_group->ctx->pdev, address);
+   u32 reg = scd_read_register(fan_group->ctx->dev, address);
 
    reg &= fan_group->platform->mask_size;
    return reg;
@@ -475,13 +475,13 @@ static ssize_t scd_fan_fault_show(struct device *dev, struct device_attribute *d
    struct scd_fan_group *group = dev_get_drvdata(dev);
    struct scd_fan *fan = to_scd_fan_attr(attr)->fan;
    u32 address = FAN_ADDR(group, ok);
-   u32 reg = scd_read_register(group->ctx->pdev, address);
+   u32 reg = scd_read_register(group->ctx->dev, address);
    // TODO: platforms without OK register should have alternate way of reporting
    // fault, e.g. if tach reading is invalid
    if (!FAN_HAS_REG(group, ok)) {
-      return sprintf(buf, "0\n");
+      return sysfs_emit(buf, "0\n");
    }
-   return sprintf(buf, "%u\n", !(reg & (1 << fan->index)));
+   return sysfs_emit(buf, "%u\n", !(reg & (1 << fan->index)));
 }
 
 static ssize_t scd_fan_input_show(struct device *dev, struct device_attribute *da,
@@ -495,9 +495,9 @@ static ssize_t scd_fan_input_show(struct device *dev, struct device_attribute *d
    u32 mask = group->platform->mask_tach;
    u32 avg = 0, val = 0;
 
-   avg += scd_read_register(group->ctx->pdev, outer_address) & mask;
+   avg += scd_read_register(group->ctx->dev, outer_address) & mask;
    if (fan->info->rotors > 1) {
-      avg += scd_read_register(group->ctx->pdev, inner_address) & mask;
+      avg += scd_read_register(group->ctx->dev, inner_address) & mask;
    }
    avg /= fan->info->rotors;
    if (avg && fan->info->pulses)
@@ -505,15 +505,15 @@ static ssize_t scd_fan_input_show(struct device *dev, struct device_attribute *d
    else
       return -EDOM;
 
-   return sprintf(buf, "%u\n", val);
+   return sysfs_emit(buf, "%u\n", val);
 }
 
 static u32 scd_fan_led_read(struct scd_fan *fan) {
    struct scd_fan_group *group = fan->fan_group;
    u32 addr_g = FAN_ADDR(group, green_led);
    u32 addr_r = FAN_ADDR(group, red_led);
-   u32 reg_g = scd_read_register(group->ctx->pdev, addr_g);
-   u32 reg_r = scd_read_register(group->ctx->pdev, addr_r);
+   u32 reg_g = scd_read_register(group->ctx->dev, addr_g);
+   u32 reg_r = scd_read_register(group->ctx->dev, addr_r);
    u32 val = 0;
 
    if ((reg_g & (1 << fan->index)) == 0)
@@ -529,8 +529,8 @@ static void scd_fan_led_write(struct scd_fan *fan, u32 val)
    struct scd_fan_group *group = fan->fan_group;
    u32 addr_g = FAN_ADDR(group, green_led);
    u32 addr_r = FAN_ADDR(group, red_led);
-   u32 reg_g = scd_read_register(group->ctx->pdev, addr_g);
-   u32 reg_r = scd_read_register(group->ctx->pdev, addr_r);
+   u32 reg_g = scd_read_register(group->ctx->dev, addr_g);
+   u32 reg_r = scd_read_register(group->ctx->dev, addr_r);
 
    if ((val & group->platform->mask_green_led) == 0)
       reg_g |= (1 << fan->index);
@@ -542,8 +542,8 @@ static void scd_fan_led_write(struct scd_fan *fan, u32 val)
    else
       reg_r &= ~(1 << fan->index);
 
-   scd_write_register(group->ctx->pdev, addr_g, reg_g);
-   scd_write_register(group->ctx->pdev, addr_r, reg_r);
+   scd_write_register(group->ctx->dev, addr_g, reg_g);
+   scd_write_register(group->ctx->dev, addr_r, reg_r);
 }
 
 static ssize_t scd_fan_led_show(struct device *dev, struct device_attribute *da,
@@ -553,7 +553,7 @@ static ssize_t scd_fan_led_show(struct device *dev, struct device_attribute *da,
    struct scd_fan *fan = to_scd_fan_attr(attr)->fan;
    u32 val = scd_fan_led_read(fan);
 
-   return sprintf(buf, "%u\n", val);
+   return sysfs_emit(buf, "%u\n", val);
 }
 
 static ssize_t scd_fan_led_store(struct device *dev, struct device_attribute *da,
@@ -592,7 +592,7 @@ static ssize_t scd_fan_airflow_show(struct device *dev,
    struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
    struct scd_fan *fan = to_scd_fan_attr(attr)->fan;
 
-   return sprintf(buf, "%s\n", (fan->info->forward) ? "forward" : "reverse");
+   return sysfs_emit(buf, "%s\n", (fan->info->forward) ? "forward" : "reverse");
 }
 
 static ssize_t scd_fan_slot_show(struct device *dev,
@@ -602,7 +602,7 @@ static ssize_t scd_fan_slot_show(struct device *dev,
    struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
    struct scd_fan *fan = to_scd_fan_attr(attr)->fan;
 
-   return sprintf(buf, "%u\n", fan->index + 1);
+   return sysfs_emit(buf, "%u\n", fan->index + 1);
 }
 
 static ssize_t scd_fan_model_show(struct device *dev,
@@ -612,7 +612,7 @@ static ssize_t scd_fan_model_show(struct device *dev,
    struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
    struct scd_fan *fan = to_scd_fan_attr(attr)->fan;
 
-   return sprintf(buf, "%s\n", fan->info->model);
+   return sysfs_emit(buf, "%s\n", fan->info->model);
 }
 
 /*
@@ -808,6 +808,17 @@ int scd_fan_group_add(struct scd_context *ctx, u32 addr, u32 platform_id,
    if (slot_count > platform->max_slot_count) {
       dev_warn(get_scd_dev(ctx), "the fan slot_count argument is larger than %zu",
                platform->max_slot_count);
+      return -EINVAL;
+   }
+
+   /*
+    * fan_count indexes the fixed-size speed_*_steps[] arrays in the
+    * platform descriptor (see FAN_SPEED_ADDR); an unbounded value reads
+    * past those arrays and yields a wild MMIO offset multiplier.
+    */
+   if (fan_count >= ARRAY_SIZE(platform->speed_pwm_steps)) {
+      dev_warn(get_scd_dev(ctx), "the fan fan_count argument is larger than %zu",
+               ARRAY_SIZE(platform->speed_pwm_steps));
       return -EINVAL;
    }
 

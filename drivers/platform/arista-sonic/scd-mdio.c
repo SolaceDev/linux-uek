@@ -38,14 +38,14 @@ static union mdio_ctrl_status_reg mdio_master_read_cs(struct scd_mdio_master *ma
 {
    union mdio_ctrl_status_reg cs;
 
-   cs.reg = scd_read_register(master->ctx->pdev, master->cs);
+   cs.reg = scd_read_register(master->ctx->dev, master->cs);
    return cs;
 }
 
 static void mdio_master_write_cs(struct scd_mdio_master *master,
                                  union mdio_ctrl_status_reg cs)
 {
-   scd_write_register(master->ctx->pdev, master->cs, cs.reg);
+   scd_write_register(master->ctx->dev, master->cs, cs.reg);
 }
 
 static union mdio_ctrl_status_reg get_default_mdio_cs(struct scd_mdio_master *master)
@@ -129,10 +129,10 @@ static s32 scd_mdio_bus_request(struct scd_mdio_bus *mdio_bus,
    req_lo.dt = devad;
    req_lo.pa = prtad;
    req_lo.d = data;
-   scd_write_register(master->ctx->pdev, master->req_lo, req_lo.reg);
+   scd_write_register(master->ctx->dev, master->req_lo, req_lo.reg);
 
    req_hi.ri = mdio_master_get_req_id(master);
-   scd_write_register(master->ctx->pdev, master->req_hi, req_hi.reg);
+   scd_write_register(master->ctx->dev, master->req_hi, req_hi.reg);
 
    err = mdio_master_wait_response(master);
    if (err)
@@ -140,7 +140,7 @@ static s32 scd_mdio_bus_request(struct scd_mdio_bus *mdio_bus,
 
    mdio_master_reset_interrupt(master);
 
-   resp.reg = scd_read_register(master->ctx->pdev, master->resp);
+   resp.reg = scd_read_register(master->ctx->dev, master->resp);
    if (resp.ts != 1 || resp.fe == 1) {
       dev_warn(get_scd_dev(master->ctx), "mdio bus request failed in reading resp");
       return -EIO;
@@ -247,7 +247,7 @@ static ssize_t mdio_id_show(struct device *dev, struct device_attribute *attr, c
 {
    struct mdio_device *mdio_dev = to_mdio_device(dev);
    struct scd_mdio_bus *bus = (struct scd_mdio_bus*)mdio_dev->bus->priv;
-   return sprintf(buf, "mdio%d_%d_%d\n", bus->master->id, bus->id, mdio_dev->addr);
+   return sysfs_emit(buf, "mdio%d_%d_%d\n", bus->master->id, bus->id, mdio_dev->addr);
 }
 static DEVICE_ATTR_RO(mdio_id);
 
@@ -417,7 +417,7 @@ static int scd_mdio_bus_add(struct scd_mdio_master *master, int id)
    mii_bus->parent = get_scd_dev(master->ctx);
    mii_bus->phy_mask = GENMASK(31, 0);
    scnprintf(mii_bus->id, MII_BUS_ID_SIZE,
-             "scd-%s-mdio-%02x:%02x", pci_name(master->ctx->pdev),
+             "scd-%s-mdio-%02x:%02x", get_scd_name(master->ctx),
              master->id, id);
 
    err = mdiobus_register(mii_bus);
@@ -433,7 +433,13 @@ static int scd_mdio_bus_add(struct scd_mdio_master *master, int id)
    return 0;
 
 fail:
-   mdiobus_free(scd_mdio_bus->mii_bus);
+   /*
+    * Reached only from the mdiobus_register() failure above, before
+    * scd_mdio_bus->mii_bus is assigned; free the local mii_bus, which is
+    * the allocated (and now unregistered) bus. Using scd_mdio_bus->mii_bus
+    * here would be mdiobus_free(NULL) and would also leak mii_bus.
+    */
+   mdiobus_free(mii_bus);
    kfree(scd_mdio_bus);
    return err;
 }
@@ -498,6 +504,17 @@ int scd_mdio_master_add(struct scd_context *ctx, u32 addr, u16 id, u16 bus_count
       }
    }
 
+   /*
+    * The parse layer only bounds the base addr against res_size; the
+    * derived register offsets (req_lo/req_hi/cs/resp) are computed here
+    * and must also stay within the mapped resource.  Reject any addr
+    * whose highest derived offset would reach res_size (the register
+    * accessors require offset < mem_len == res_size).
+    */
+   if ((size_t)addr + MDIO_RESPONSE_OFFSET >= ctx->res_size) {
+      return -EINVAL;
+   }
+
    master = kzalloc(sizeof(*master), GFP_KERNEL);
    if (!master) {
       return -ENOMEM;
@@ -511,6 +528,7 @@ int scd_mdio_master_add(struct scd_context *ctx, u32 addr, u16 id, u16 bus_count
    master->cs = addr + MDIO_CONTROL_STATUS_OFFSET;
    master->resp = addr + MDIO_RESPONSE_OFFSET;
    master->speed = speed;
+   INIT_LIST_HEAD(&master->list);
    INIT_LIST_HEAD(&master->bus_list);
 
    for (i = 0; i < bus_count; ++i) {

@@ -8,12 +8,20 @@
  * Mathieu Desnoyers <mathieu.desnoyers@efficios.com>
  */
 
+/* Required to select the proper per_cpu ops for rseq_stats_inc() */
+#define RSEQ_BUILD_SLOW_PATH
+
+#include <linux/debugfs.h>
+#include <linux/ratelimit.h>
+#include <linux/rseq_entry.h>
+#include <linux/hrtimer.h>
+#include <linux/percpu.h>
 #include <linux/sched.h>
-#include <linux/uaccess.h>
 #include <linux/syscalls.h>
-#include <linux/rseq.h>
+#include <linux/uaccess.h>
 #include <linux/types.h>
 #include <asm/ptrace.h>
+#include <linux/prctl.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/rseq.h>
@@ -24,6 +32,8 @@
 #define RSEQ_CS_NO_RESTART_FLAGS (RSEQ_CS_FLAG_NO_RESTART_ON_PREEMPT | \
 				  RSEQ_CS_FLAG_NO_RESTART_ON_SIGNAL | \
 				  RSEQ_CS_FLAG_NO_RESTART_ON_MIGRATE)
+#define RSEQ_CS_SLICE_EXT_FLAGS (RSEQ_CS_FLAG_SLICE_EXT_AVAILABLE | \
+				 RSEQ_CS_FLAG_SLICE_EXT_ENABLED)
 
 /*
  *
@@ -85,6 +95,123 @@
  *   F1. <failure>
  */
 
+DEFINE_STATIC_KEY_MAYBE(CONFIG_RSEQ_DEBUG_DEFAULT_ENABLE, rseq_debug_enabled);
+
+static inline void rseq_control_debug(bool on)
+{
+	if (on)
+		static_branch_enable(&rseq_debug_enabled);
+	else
+		static_branch_disable(&rseq_debug_enabled);
+}
+
+static int __init rseq_setup_debug(char *str)
+{
+	bool on;
+
+	if (kstrtobool(str, &on))
+		return -EINVAL;
+	rseq_control_debug(on);
+	return 1;
+}
+__setup("rseq_debug=", rseq_setup_debug);
+
+#ifdef CONFIG_RSEQ_STATS
+DEFINE_PER_CPU(struct rseq_stats, rseq_stats);
+
+static int rseq_stats_show(struct seq_file *m, void *p)
+{
+	struct rseq_stats stats = { };
+	unsigned int cpu;
+
+	for_each_possible_cpu(cpu) {
+		if (IS_ENABLED(CONFIG_RSEQ_SLICE_EXTENSION)) {
+			stats.s_granted	+= data_race(per_cpu(rseq_stats.s_granted, cpu));
+			stats.s_expired	+= data_race(per_cpu(rseq_stats.s_expired, cpu));
+			stats.s_revoked	+= data_race(per_cpu(rseq_stats.s_revoked, cpu));
+			stats.s_yielded	+= data_race(per_cpu(rseq_stats.s_yielded, cpu));
+			stats.s_aborted	+= data_race(per_cpu(rseq_stats.s_aborted, cpu));
+		}
+	}
+
+	if (IS_ENABLED(CONFIG_RSEQ_SLICE_EXTENSION)) {
+		seq_printf(m, "sgrant: %16lu\n", stats.s_granted);
+		seq_printf(m, "sexpir: %16lu\n", stats.s_expired);
+		seq_printf(m, "srevok: %16lu\n", stats.s_revoked);
+		seq_printf(m, "syield: %16lu\n", stats.s_yielded);
+		seq_printf(m, "sabort: %16lu\n", stats.s_aborted);
+	}
+	return 0;
+}
+
+static int rseq_stats_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, rseq_stats_show, inode->i_private);
+}
+
+static const struct file_operations stat_ops = {
+	.open		= rseq_stats_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static int __init rseq_stats_init(struct dentry *root_dir)
+{
+	debugfs_create_file("stats", 0444, root_dir, NULL, &stat_ops);
+	return 0;
+}
+#else
+static inline void rseq_stats_init(struct dentry *root_dir) { }
+#endif /* CONFIG_RSEQ_STATS */
+
+static int rseq_debug_show(struct seq_file *m, void *p)
+{
+	bool on = static_branch_unlikely(&rseq_debug_enabled);
+
+	seq_printf(m, "%d\n", on);
+	return 0;
+}
+
+static ssize_t rseq_debug_write(struct file *file, const char __user *ubuf,
+			    size_t count, loff_t *ppos)
+{
+	bool on;
+
+	if (kstrtobool_from_user(ubuf, count, &on))
+		return -EINVAL;
+
+	rseq_control_debug(on);
+	return count;
+}
+
+static int rseq_debug_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, rseq_debug_show, inode->i_private);
+}
+
+static const struct file_operations debug_ops = {
+	.open		= rseq_debug_open,
+	.read		= seq_read,
+	.write		= rseq_debug_write,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static void rseq_slice_ext_init(struct dentry *root_dir);
+
+static int __init rseq_debugfs_init(void)
+{
+	struct dentry *root_dir = debugfs_create_dir("rseq", NULL);
+
+	debugfs_create_file("debug", 0644, root_dir, NULL, &debug_ops);
+	rseq_stats_init(root_dir);
+	if (IS_ENABLED(CONFIG_RSEQ_SLICE_EXTENSION))
+		rseq_slice_ext_init(root_dir);
+	return 0;
+}
+__initcall(rseq_debugfs_init);
+
 static int rseq_update_cpu_node_id(struct task_struct *t)
 {
 	struct rseq __user *rseq = t->rseq;
@@ -99,12 +226,20 @@ static int rseq_update_cpu_node_id(struct task_struct *t)
 	unsafe_put_user(cpu_id, &rseq->cpu_id, efault_end);
 	unsafe_put_user(node_id, &rseq->node_id, efault_end);
 	unsafe_put_user(mm_cid, &rseq->mm_cid, efault_end);
+	/* Open coded, so it's in the same user access region */
+	if (rseq_slice_extension_enabled() &&
+		t->rseq_len > ORIG_RSEQ_SIZE) {
+		/* Unconditionally clear it, no point in conditionals */
+		unsafe_put_user(0U, &rseq->slice_ctrl.all, efault_end);
+	}
+
 	/*
 	 * Additional feature fields added after ORIG_RSEQ_SIZE
 	 * need to be conditionally updated only if
 	 * t->rseq_len != ORIG_RSEQ_SIZE.
 	 */
 	user_write_access_end();
+	rseq_slice_clear_grant(t);
 	trace_rseq_update(t);
 	return 0;
 
@@ -226,12 +361,13 @@ static bool rseq_warn_flags(const char *str, u32 flags)
 {
 	u32 test_flags;
 
-	if (!flags)
+	test_flags = flags & ~RSEQ_CS_SLICE_EXT_FLAGS;
+	if (!test_flags)
 		return false;
 	test_flags = flags & RSEQ_CS_NO_RESTART_FLAGS;
 	if (test_flags)
 		pr_warn_once("Deprecated flags (%u) in %s ABI structure", test_flags, str);
-	test_flags = flags & ~RSEQ_CS_NO_RESTART_FLAGS;
+	test_flags = flags & ~(RSEQ_CS_NO_RESTART_FLAGS | RSEQ_CS_SLICE_EXT_FLAGS);
 	if (test_flags)
 		pr_warn_once("Unknown flags (%u) in %s ABI structure", test_flags, str);
 	return true;
@@ -357,68 +493,14 @@ void __rseq_handle_notify_resume(struct ksignal *ksig, struct pt_regs *regs)
 	return;
 
 error:
+	/* Ensure grant is cleared in kernel state and user space */
+	if (t->rseq_slice.state.granted) {
+		t->rseq_slice.state.granted = false;
+		(void)put_user(0U, &t->rseq->slice_ctrl.all);
+	}
 	sig = ksig ? ksig->sig : 0;
 	force_sigsegv(sig);
 }
-
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-bool rseq_delay_resched(void)
-{
-	struct task_struct *t = current;
-	u32 flags;
-
-	if (!IS_ENABLED(CONFIG_SCHED_HRTICK))
-		return false;
-
-	if (!t->rseq)
-		return false;
-
-	if (t->rseq_sched_delay)
-		return false;
-
-	if (copy_from_user_nofault(&flags, &t->rseq->flags, sizeof(flags)))
-		return false;
-
-	if (!(flags & RSEQ_CS_FLAG_DELAY_RESCHED))
-		return false;
-
-	flags &= ~RSEQ_CS_FLAG_DELAY_RESCHED;
-	if (copy_to_user_nofault(&t->rseq->flags, &flags, sizeof(flags)))
-		return false;
-
-	t->rseq_sched_delay = 1;
-	update_stat_preempt_delayed(t);
-
-	return true;
-}
-
-void rseq_delay_resched_fini(void)
-{
-#ifdef CONFIG_SCHED_HRTICK
-	extern void hrtick_local_start(u64 delay);
-	struct task_struct *t = current;
-	/*
-	 * IRQs off, guaranteed to return to userspace, start timer on this CPU
-	 * to limit the resched-overdraft.
-	 *
-	 * If your critical section is longer than 50 us you get to keep the
-	 * pieces.
-	 */
-	if (t->rseq_sched_delay)
-		hrtick_local_start(50 * NSEC_PER_USEC);
-#endif
-}
-
-void rseq_delay_resched_tick(void)
-{
-#ifdef CONFIG_SCHED_HRTICK
-	struct task_struct *t = current;
-
-	if (t->rseq_sched_delay)
-		set_tsk_need_resched(t);
-#endif
-}
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
 
 #ifdef CONFIG_DEBUG_RSEQ
 
@@ -448,6 +530,7 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 {
 	int ret;
 	u64 rseq_cs;
+	u32 rseqfl = 0;
 
 	if (flags & RSEQ_FLAG_UNREGISTER) {
 		if (flags & ~RSEQ_FLAG_UNREGISTER)
@@ -462,13 +545,11 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 		ret = rseq_reset_rseq_cpu_node_id(current);
 		if (ret)
 			return ret;
-		current->rseq = NULL;
-		current->rseq_sig = 0;
-		current->rseq_len = 0;
+		rseq_reset(current);
 		return 0;
 	}
 
-	if (unlikely(flags))
+	if (unlikely(flags & ~(RSEQ_FLAG_SLICE_EXT_DEFAULT_ON)))
 		return -EINVAL;
 
 	if (current->rseq) {
@@ -498,7 +579,7 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 	 */
 	if (rseq_len < ORIG_RSEQ_SIZE ||
 	    (rseq_len == ORIG_RSEQ_SIZE && !IS_ALIGNED((unsigned long)rseq, ORIG_RSEQ_SIZE)) ||
-	    (rseq_len != ORIG_RSEQ_SIZE && (!IS_ALIGNED((unsigned long)rseq, __alignof__(*rseq)) ||
+	    (rseq_len != ORIG_RSEQ_SIZE && (!IS_ALIGNED((unsigned long)rseq, rseq_alloc_align()) ||
 					    rseq_len < offsetof(struct rseq, end))))
 		return -EINVAL;
 	if (!access_ok(rseq, rseq_len))
@@ -519,6 +600,28 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 	current->rseq = rseq;
 	current->rseq_len = rseq_len;
 	current->rseq_sig = sig;
+
+	if (IS_ENABLED(CONFIG_RSEQ_SLICE_EXTENSION) &&
+                       rseq_len > ORIG_RSEQ_SIZE) {
+		if (rseq_slice_extension_enabled()) {
+			rseqfl |= RSEQ_CS_FLAG_SLICE_EXT_AVAILABLE;
+			if (flags & RSEQ_FLAG_SLICE_EXT_DEFAULT_ON)
+				rseqfl |= RSEQ_CS_FLAG_SLICE_EXT_ENABLED;
+		}
+	}
+
+	if (!user_write_access_begin(rseq, current->rseq_len))
+		return -EFAULT;
+
+	unsafe_put_user(rseqfl, &rseq->flags, efault);
+	if (rseq_len > ORIG_RSEQ_SIZE)
+		unsafe_put_user(0U, &rseq->slice_ctrl.all, efault);
+	user_write_access_end();
+
+#ifdef CONFIG_RSEQ_SLICE_EXTENSION
+	current->rseq_slice.state.enabled = !!(rseqfl & RSEQ_CS_FLAG_SLICE_EXT_ENABLED);
+#endif
+
 	/*
 	 * If rseq was previously inactive, and has just been
 	 * registered, ensure the cpu_id_start and cpu_id fields
@@ -527,4 +630,331 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 	rseq_set_notify_resume(current);
 
 	return 0;
+efault:
+	user_write_access_end();
+	return -EFAULT;
 }
+
+#ifdef CONFIG_RSEQ_SLICE_EXTENSION
+struct slice_timer {
+	struct hrtimer	timer;
+	void		*cookie;
+};
+
+static const unsigned int rseq_slice_ext_nsecs_min =  5 * NSEC_PER_USEC;
+static const unsigned int rseq_slice_ext_nsecs_max = 50 * NSEC_PER_USEC;
+unsigned int rseq_slice_ext_nsecs __read_mostly = rseq_slice_ext_nsecs_min;
+static DEFINE_PER_CPU(struct slice_timer, slice_timer);
+DEFINE_STATIC_KEY_TRUE(rseq_slice_extension_key);
+
+/*
+ * When the timer expires and the task is still in user space, the return
+ * from interrupt will revoke the grant and schedule. If the task already
+ * entered the kernel via a syscall and the timer fires before the syscall
+ * work was able to cancel it, then depending on the preemption model this
+ * will either reschedule on return from interrupt or in the syscall work
+ * below.
+ */
+static enum hrtimer_restart rseq_slice_expired(struct hrtimer *tmr)
+{
+	struct slice_timer *st = container_of(tmr, struct slice_timer, timer);
+
+	/*
+	 * Validate that the task which armed the timer is still on the
+	 * CPU. It could have been scheduled out without canceling the
+	 * timer.
+	 */
+	if (st->cookie == current && current->rseq_slice.state.granted) {
+		rseq_stat_inc(rseq_stats.s_expired);
+		set_need_resched_current();
+	}
+	return HRTIMER_NORESTART;
+}
+
+bool __rseq_arm_slice_extension_timer(void)
+{
+	struct slice_timer *st = this_cpu_ptr(&slice_timer);
+	struct task_struct *curr = current;
+
+	lockdep_assert_irqs_disabled();
+
+	/*
+	 * This check prevents a task, which got a time slice extension
+	 * granted, from exceeding the maximum scheduling latency when the
+	 * grant expired before going out to user space. Don't bother to
+	 * clear the grant here, it will be cleaned up automatically before
+	 * going out to user space after being scheduled back in.
+	 */
+	if ((unlikely(curr->rseq_slice_expires < ktime_get_mono_fast_ns()))) {
+		set_need_resched_current();
+		return true;
+	}
+
+	/*
+	 * Store the task pointer as a cookie for comparison in the timer
+	 * function. This is safe as the timer is CPU local and cannot be
+	 * in the expiry function at this point.
+	 */
+	st->cookie = curr;
+	hrtimer_start(&st->timer, curr->rseq_slice_expires, HRTIMER_MODE_ABS_PINNED_HARD);
+	/* Arm the syscall entry work */
+	set_task_syscall_work(curr, SYSCALL_RSEQ_SLICE);
+	return false;
+}
+
+static void rseq_cancel_slice_extension_timer(void)
+{
+	struct slice_timer *st = this_cpu_ptr(&slice_timer);
+
+	/*
+	 * st->cookie can be safely read as preemption is disabled and the
+	 * timer is CPU local.
+	 *
+	 * As this is most probably the first expiring timer, the cancel is
+	 * expensive as it has to reprogram the hardware, but that's less
+	 * expensive than going through a full hrtimer_interrupt() cycle
+	 * for nothing.
+	 *
+	 * hrtimer_try_to_cancel() is sufficient here as the timer is CPU
+	 * local and once the hrtimer code disabled interrupts the timer
+	 * callback cannot be running.
+	 */
+	if (st->cookie == current)
+		hrtimer_try_to_cancel(&st->timer);
+}
+
+static inline void rseq_slice_set_need_resched(struct task_struct *curr)
+{
+	/*
+	 * The interrupt guard is required to prevent inconsistent state in
+	 * this case:
+	 *
+	 * set_tsk_need_resched()
+	 * --> Interrupt
+	 *       wakeup()
+	 *        set_tsk_need_resched()
+	 *	  set_preempt_need_resched()
+	 *     schedule_on_return()
+	 *        clear_tsk_need_resched()
+	 *	  clear_preempt_need_resched()
+	 * set_preempt_need_resched()		<- Inconsistent state
+	 *
+	 * This is safe vs. a remote set of TIF_NEED_RESCHED because that
+	 * only sets the already set bit and does not create inconsistent
+	 * state.
+	 */
+	scoped_guard(irq)
+		set_need_resched_current();
+}
+
+static void rseq_slice_validate_ctrl(u32 expected)
+{
+	u32 __user *sctrl = &current->rseq->slice_ctrl.all;
+	u32 uval;
+
+	if (get_user(uval, sctrl) || uval != expected)
+		force_sig(SIGSEGV);
+}
+
+/*
+ * Invoked from syscall entry if a time slice extension was granted and the
+ * kernel did not clear it before user space left the critical section.
+ *
+ * While the recommended way to relinquish the CPU side effect free is
+ * rseq_slice_yield(2), any syscall within a granted slice terminates the
+ * grant and immediately reschedules if required. This supports onion layer
+ * applications, where the code requesting the grant cannot control the
+ * code within the critical section.
+ */
+void rseq_syscall_enter_work(long syscall)
+{
+	struct task_struct *curr = current;
+	struct rseq_slice_ctrl ctrl = { .granted = curr->rseq_slice.state.granted };
+
+	clear_task_syscall_work(curr, SYSCALL_RSEQ_SLICE);
+
+	if (static_branch_unlikely(&rseq_debug_enabled))
+		rseq_slice_validate_ctrl(ctrl.all);
+
+	/*
+	 * The kernel might have raced, revoked the grant and updated
+	 * userspace, but kept the SLICE work set.
+	 */
+	if (!ctrl.granted)
+		return;
+
+	/*
+	 * Required to stabilize the per CPU timer pointer and to make
+	 * set_tsk_need_resched() correct on PREEMPT[RT] kernels.
+	 *
+	 * Leaving the scope will reschedule on preemption models FULL,
+	 * LAZY and RT if necessary.
+	 */
+	scoped_guard(preempt) {
+		rseq_cancel_slice_extension_timer();
+		rseq_slice_set_need_resched(curr);
+
+		if (syscall == __NR_rseq_slice_yield) {
+			rseq_stat_inc(rseq_stats.s_yielded);
+			/* Update the yielded state for syscall return */
+			curr->rseq_slice.yielded = 1;
+		} else {
+			rseq_stat_inc(rseq_stats.s_aborted);
+		}
+	}
+	/* Reschedule on NONE/VOLUNTARY preemption models */
+	cond_resched();
+
+	/* Clear the grant in kernel state and user space */
+	curr->rseq_slice.state.granted = false;
+	if (put_user(0U, &curr->rseq->slice_ctrl.all))
+		force_sig(SIGSEGV);
+}
+
+int rseq_slice_extension_prctl(unsigned long arg2, unsigned long arg3)
+{
+	switch (arg2) {
+	case PR_RSEQ_SLICE_EXTENSION_GET:
+		if (arg3)
+			return -EINVAL;
+		return current->rseq_slice.state.enabled ? PR_RSEQ_SLICE_EXT_ENABLE : 0;
+
+	case PR_RSEQ_SLICE_EXTENSION_SET: {
+		u32 rflags, valid = RSEQ_CS_FLAG_SLICE_EXT_AVAILABLE;
+		bool enable = !!(arg3 & PR_RSEQ_SLICE_EXT_ENABLE);
+
+		if (arg3 & ~PR_RSEQ_SLICE_EXT_ENABLE)
+			return -EINVAL;
+		if (!rseq_slice_extension_enabled())
+			return -ENOTSUPP;
+		if (!current->rseq)
+			return -ENXIO;
+		if (current->rseq_len <= ORIG_RSEQ_SIZE)
+			return -ENOTSUPP;
+
+		/* No change? */
+		if (enable == !!current->rseq_slice.state.enabled)
+			return 0;
+
+		if (get_user(rflags, &current->rseq->flags))
+			goto die;
+
+		if (current->rseq_slice.state.enabled)
+			valid |= RSEQ_CS_FLAG_SLICE_EXT_ENABLED;
+
+		if ((rflags & valid) != valid)
+			goto die;
+
+		rflags &= ~RSEQ_CS_FLAG_SLICE_EXT_ENABLED;
+		rflags |= RSEQ_CS_FLAG_SLICE_EXT_AVAILABLE;
+		if (enable)
+			rflags |= RSEQ_CS_FLAG_SLICE_EXT_ENABLED;
+
+		if (put_user(rflags, &current->rseq->flags))
+			goto die;
+
+		current->rseq_slice.state.enabled = enable;
+		return 0;
+	}
+	default:
+		return -EINVAL;
+	}
+die:
+	force_sig(SIGSEGV);
+	return -EFAULT;
+}
+
+/**
+ * sys_rseq_slice_yield - yield the current processor side effect free if a
+ *			  task granted with a time slice extension is done with
+ *			  the critical work before being forced out.
+ *
+ * Return: 1 if the task successfully yielded the CPU within the granted slice.
+ *         0 if the slice extension was either never granted or was revoked by
+ *	     going over the granted extension, using a syscall other than this one
+ *	     or being scheduled out earlier due to a subsequent interrupt.
+ *
+ * The syscall does not schedule because the syscall entry work immediately
+ * relinquishes the CPU and schedules if required.
+ */
+SYSCALL_DEFINE0(rseq_slice_yield)
+{
+	int yielded = !!current->rseq_slice.yielded;
+
+	current->rseq_slice.yielded = 0;
+	return yielded;
+}
+
+static int rseq_slice_ext_show(struct seq_file *m, void *p)
+{
+	seq_printf(m, "%d\n", rseq_slice_ext_nsecs);
+	return 0;
+}
+
+static ssize_t rseq_slice_ext_write(struct file *file, const char __user *ubuf,
+				    size_t count, loff_t *ppos)
+{
+	unsigned int nsecs;
+
+	if (kstrtouint_from_user(ubuf, count, 10, &nsecs))
+		return -EINVAL;
+
+	if (nsecs < rseq_slice_ext_nsecs_min)
+		return -ERANGE;
+
+	if (nsecs > rseq_slice_ext_nsecs_max)
+		return -ERANGE;
+
+	rseq_slice_ext_nsecs = nsecs;
+
+	return count;
+}
+
+static int rseq_slice_ext_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, rseq_slice_ext_show, inode->i_private);
+}
+
+static const struct file_operations slice_ext_ops = {
+	.open		= rseq_slice_ext_open,
+	.read		= seq_read,
+	.write		= rseq_slice_ext_write,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static void rseq_slice_ext_init(struct dentry *root_dir)
+{
+	debugfs_create_file("slice_ext_nsec", 0644, root_dir, NULL, &slice_ext_ops);
+}
+
+static int __init rseq_slice_cmdline(char *str)
+{
+	bool on;
+
+	if (kstrtobool(str, &on))
+		return 0;
+
+	if (!on)
+		static_branch_disable(&rseq_slice_extension_key);
+	return 1;
+}
+__setup("rseq_slice_ext=", rseq_slice_cmdline);
+
+static int __init rseq_slice_init(void)
+{
+	unsigned int cpu;
+	struct hrtimer *ht;
+
+	for_each_possible_cpu(cpu) {
+		ht = per_cpu_ptr(&slice_timer.timer, cpu);
+		hrtimer_init(ht, CLOCK_MONOTONIC,
+			HRTIMER_MODE_REL_PINNED_HARD);
+		ht->function = rseq_slice_expired;
+	}
+	return 0;
+}
+device_initcall(rseq_slice_init);
+#else
+static void rseq_slice_ext_init(struct dentry *root_dir) { }
+#endif /* CONFIG_RSEQ_SLICE_EXTENSION */

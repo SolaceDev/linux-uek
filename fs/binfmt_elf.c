@@ -273,8 +273,12 @@ create_elf_tables(struct linux_binprm *bprm, const struct elfhdr *exec,
 		NEW_AUX_ENT(AT_EXECFD, bprm->execfd);
 	}
 #ifdef CONFIG_RSEQ
-	NEW_AUX_ENT(AT_RSEQ_FEATURE_SIZE, offsetof(struct rseq, end));
-	NEW_AUX_ENT(AT_RSEQ_ALIGN, __alignof__(struct rseq));
+	/*
+	 * XXX UEK - user exposed size is + 1 byte due to KABI definition
+	 * of struct rseq.
+	 */
+	NEW_AUX_ENT(AT_RSEQ_FEATURE_SIZE, offsetof(struct rseq, end) + 1);
+	NEW_AUX_ENT(AT_RSEQ_ALIGN, rseq_alloc_align());
 #endif
 	NEW_AUX_ENT(AT_VA_RESERVATION, 1);
 #undef NEW_AUX_ENT
@@ -1460,7 +1464,7 @@ out_free_interp:
 		}
 		reloc_func_desc = interp_load_addr;
 
-		allow_write_access(interpreter);
+		exe_file_allow_write_access(interpreter);
 		fput(interpreter);
 
 		kfree(interp_elf_ex);
@@ -1575,7 +1579,7 @@ out_free_dentry:
 	kfree(interp_elf_ex);
 	kfree(interp_elf_phdata);
 out_free_file:
-	allow_write_access(interpreter);
+	exe_file_allow_write_access(interpreter);
 	if (interpreter)
 		fput(interpreter);
 out_free_ph:

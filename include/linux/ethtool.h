@@ -19,6 +19,7 @@
 #include <linux/if_ether.h>
 #include <linux/netlink.h>
 #include <uapi/linux/ethtool.h>
+#include <uapi/linux/ethtool_netlink_generated.h>
 #include <uapi/linux/net_tstamp.h>
 
 struct compat_ethtool_rx_flow_spec {
@@ -79,6 +80,9 @@ enum {
  * @cqe_size: Size of TX/RX completion queue event
  * @tx_push_buf_len: Size of TX push buffer
  * @tx_push_buf_max_len: Maximum allowed size of TX push buffer
+ * @hds_thresh: Packet size threshold for header data split (HDS)
+ * @hds_thresh_max: Maximum supported setting for @hds_threshold
+ *
  */
 struct kernel_ethtool_ringparam {
 	u32	rx_buf_len;
@@ -88,6 +92,8 @@ struct kernel_ethtool_ringparam {
 	u32	cqe_size;
 	u32	tx_push_buf_len;
 	u32	tx_push_buf_max_len;
+	UEK_KABI_EXTEND(u32 hds_thresh)
+	UEK_KABI_EXTEND(u32 hds_thresh_max)
 };
 
 /**
@@ -98,6 +104,7 @@ struct kernel_ethtool_ringparam {
  * @ETHTOOL_RING_USE_RX_PUSH: capture for setting rx_push
  * @ETHTOOL_RING_USE_TX_PUSH_BUF_LEN: capture for setting tx_push_buf_len
  * @ETHTOOL_RING_USE_TCP_DATA_SPLIT: capture for setting tcp_data_split
+ * @ETHTOOL_RING_USE_HDS_THRS: capture for setting header-data-split-thresh
  */
 enum ethtool_supported_ring_param {
 	ETHTOOL_RING_USE_RX_BUF_LEN		= BIT(0),
@@ -106,6 +113,7 @@ enum ethtool_supported_ring_param {
 	ETHTOOL_RING_USE_RX_PUSH		= BIT(3),
 	ETHTOOL_RING_USE_TX_PUSH_BUF_LEN	= BIT(4),
 	ETHTOOL_RING_USE_TCP_DATA_SPLIT		= BIT(5),
+	ETHTOOL_RING_USE_HDS_THRS		= BIT(6),
 };
 
 #define __ETH_RSS_HASH_BIT(bit)	((u32)1 << (bit))
@@ -732,10 +740,26 @@ struct ethtool_rxfh_param {
 };
 
 /**
+ * struct ethtool_rxfh_fields - Rx Flow Hashing (RXFH) header field config
+ * @data: which header fields are used for hashing, bitmask of RXH_* defines
+ * @flow_type: L2-L4 network traffic flow type
+ * @rss_context: RSS context, will only be used if rxfh_per_ctx_fields is
+ *	set in struct ethtool_ops
+ */
+struct ethtool_rxfh_fields {
+	u32 data;
+	u32 flow_type;
+	u32 rss_context;
+};
+
+/**
  * struct kernel_ethtool_ts_info - kernel copy of struct ethtool_ts_info
  * @cmd: command number = %ETHTOOL_GET_TS_INFO
  * @so_timestamping: bit mask of the sum of the supported SO_TIMESTAMPING flags
  * @phc_index: device index of the associated PHC, or -1 if there is none
+ * @phc_qualifier: qualifier of the associated PHC
+ * @phc_source: source device of the associated PHC
+ * @phc_phyindex: index of PHY device source of the associated PHC
  * @tx_types: bit mask of the supported hwtstamp_tx_types enumeration values
  * @rx_filters: bit mask of the supported hwtstamp_rx_filters enumeration values
  */
@@ -745,6 +769,9 @@ struct kernel_ethtool_ts_info {
 	int phc_index;
 	enum hwtstamp_tx_types tx_types;
 	enum hwtstamp_rx_filters rx_filters;
+	UEK_KABI_EXTEND(enum hwtstamp_provider_qualifier phc_qualifier)
+	UEK_KABI_EXTEND(enum hwtstamp_source phc_source)
+	UEK_KABI_EXTEND(int phc_phyindex)
 };
 
 /**
@@ -755,6 +782,8 @@ struct kernel_ethtool_ts_info {
  * @cap_rss_ctx_supported: indicates if the driver supports RSS
  *	contexts via legacy API, drivers implementing @create_rxfh_context
  *	do not have to set this bit.
+ * @rxfh_per_ctx_fields: device supports selecting different header fields
+ *	for Rx hash calculation and RSS for each additional context.
  * @rxfh_per_ctx_key: device supports setting different RSS key for each
  *	additional context. Netlink API should report hfunc, key, and input_xfrm
  *	for every context, not just context 0.
@@ -773,6 +802,7 @@ struct kernel_ethtool_ts_info {
  *	@rss_context argument to @create_rxfh_context and friends.
  * @supported_coalesce_params: supported types of interrupt coalescing.
  * @supported_ring_params: supported ring params.
+ * @supported_hwtstamp_qualifiers: bitfield of supported hwtstamp qualifier.
  * @get_drvinfo: Report driver/device information. Modern drivers no
  *	longer have to implement this callback. Most fields are
  *	correctly filled in by the core using system information, or
@@ -867,6 +897,8 @@ struct kernel_ethtool_ts_info {
  *	will remain unchanged.
  *	Returns a negative error code or zero. An error code must be returned
  *	if at least one unsupported change was requested.
+ * @get_rxfh_fields: Get header fields used for flow hashing.
+ * @set_rxfh_fields: Set header fields used for flow hashing.
  * @create_rxfh_context: Create a new RSS context with the specified RX flow
  *	hash indirection table, hash key, and hash function.
  *	The &struct ethtool_rxfh_context for this context is passed in @ctx;
@@ -985,6 +1017,7 @@ struct ethtool_ops {
 	u32	rxfh_per_ctx_key:1;
 	u32	cap_rss_rxnfc_adds:1;
 	UEK_KABI_FILL_HOLE(u32 supported_input_xfrm:8)
+	UEK_KABI_FILL_HOLE(u32 rxfh_per_ctx_fields:1)
 	u32	rxfh_indir_space;
 	u16	rxfh_key_space;
 	u16	rxfh_priv_size;
@@ -1127,9 +1160,12 @@ struct ethtool_ops {
 	int	(*set_mm)(struct net_device *dev, struct ethtool_mm_cfg *cfg,
 			  struct netlink_ext_ack *extack);
 	void	(*get_mm_stats)(struct net_device *dev, struct ethtool_mm_stats *stats);
-	UEK_KABI_RESERVE(1)
-	UEK_KABI_RESERVE(2)
-	UEK_KABI_RESERVE(3)
+	UEK_KABI_USE(1, u32 supported_hwtstamp_qualifiers)
+	UEK_KABI_USE(2, int (*get_rxfh_fields)(struct net_device *,
+					       struct ethtool_rxfh_fields *))
+	UEK_KABI_USE(3, int (*set_rxfh_fields)(struct net_device *,
+					       const struct ethtool_rxfh_fields *,
+					       struct netlink_ext_ack *extack))
 	UEK_KABI_RESERVE(4)
 };
 
@@ -1159,7 +1195,6 @@ int ethtool_virtdev_set_link_ksettings(struct net_device *dev,
  * @rss_ctx:		XArray of custom RSS contexts
  * @rss_lock:		Protects entries in @rss_ctx.  May be taken from
  *			within RTNL.
- * @hds_config:		HDS value from userspace.
  * @wol_enabled:	Wake-on-LAN is enabled
  * @module_fw_flash_in_progress: Module firmware flashing is in progress.
  */
@@ -1168,8 +1203,6 @@ struct ethtool_netdev_state {
 	struct mutex		rss_lock;
 	unsigned		wol_enabled:1;
 	unsigned		module_fw_flash_in_progress:1;
-
-	UEK_KABI_FILL_HOLE(u8	hds_config)
 };
 
 struct phy_device;

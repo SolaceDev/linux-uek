@@ -621,6 +621,7 @@ int rds_notify_queue_get(struct rds_sock *rs, struct msghdr *msghdr)
 	LIST_HEAD(copy);
 	int err = 0;
 
+	memset(&cmsg, 0, sizeof(cmsg));	/* fill holes with zero */
 
 	/* put_cmsg copies to user space and thus may sleep. We can't do this
 	 * with rs_lock held, so first grab as many notifications as we can stuff
@@ -742,6 +743,7 @@ static int rds_cmsg_recv(struct rds_incoming *inc, struct msghdr *msg,
 		struct rds_cmsg_rx_trace t;
 		int i, j;
 
+		memset(&t, 0, sizeof(t));
 		inc->i_rx_lat_trace[RDS_MSG_RX_CMSG] = local_clock();
 		t.rx_traces =  rs->rs_rx_traces;
 		for (i = 0; i < rs->rs_rx_traces; i++) {

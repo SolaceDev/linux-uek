@@ -42,12 +42,14 @@
 #include <linux/restart_block.h>
 #include <linux/uek_kabi.h>
 #include <uapi/linux/rseq.h>
+#include <linux/rseq_types.h>
 #include <linux/seqlock_types.h>
 #include <linux/kcsan.h>
 #include <linux/rv.h>
 #include <linux/livepatch_sched.h>
 #include <linux/uidgid_types.h>
 #include <asm/kmap_size.h>
+#include <linux/lockdep.h>
 
 /* task_struct member predeclarations (sorted alphabetically): */
 struct audit_context;
@@ -337,10 +339,6 @@ extern int __must_check io_schedule_prepare(void);
 extern void io_schedule_finish(int token);
 extern long io_schedule_timeout(long timeout);
 extern void io_schedule(void);
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-extern void hrtick_local_start(u64 delay);
-extern void update_stat_preempt_delayed(struct task_struct *t);
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
 
 /**
  * struct prev_cputime - snapshot of system and user cputime
@@ -546,9 +544,7 @@ struct sched_statistics {
 	u64				nr_wakeups_affine_attempts;
 	u64				nr_wakeups_passive;
 	u64				nr_wakeups_idle;
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-	u64				nr_preempt_delay_granted;
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
+	UEK_KABI_DEPRECATE(u64,		nr_preempt_delay_granted)
 
 #ifdef CONFIG_SCHED_CORE
 	u64				core_forceidle_sum;
@@ -946,11 +942,9 @@ struct task_struct {
 	struct plist_node		pushable_tasks;
 	struct rb_node			pushable_dl_tasks;
 #endif
-#ifndef WITHOUT_ORACLE_EXTENSIONS
 #ifdef CONFIG_RSEQ
-	unsigned			rseq_sched_delay:1;
+	UEK_KABI_DEPRECATE(unsigned,	rseq_sched_delay:1)
 #endif
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
 
 	struct mm_struct		*mm;
 	struct mm_struct		*active_mm;
@@ -1602,8 +1596,13 @@ struct task_struct {
 	UEK_KABI_RESERVE(2)
 #endif
 
+#ifdef CONFIG_RSEQ
+	UEK_KABI_USE(3, struct rseq_slice rseq_slice)
+	UEK_KABI_USE(4, u64 rseq_slice_expires)
+#else
 	UEK_KABI_RESERVE(3)
 	UEK_KABI_RESERVE(4)
+#endif
 	UEK_KABI_RESERVE(5)
 	UEK_KABI_RESERVE(6)
 	UEK_KABI_RESERVE(7)
@@ -2078,6 +2077,13 @@ static inline int test_tsk_need_resched(struct task_struct *tsk)
 	return unlikely(test_tsk_thread_flag(tsk,TIF_NEED_RESCHED));
 }
 
+static inline void set_need_resched_current(void)
+{
+        lockdep_assert_irqs_disabled();
+        set_tsk_need_resched(current);
+        set_preempt_need_resched();
+}
+
 /*
  * cond_resched() and cond_resched_lock(): latency reduction via
  * explicit rescheduling in places that are safe. The return
@@ -2247,22 +2253,6 @@ static inline bool owner_on_cpu(struct task_struct *owner)
 /* Returns effective CPU energy utilization, as seen by the scheduler */
 unsigned long sched_cpu_util(int cpu);
 #endif /* CONFIG_SMP */
-
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-#ifdef CONFIG_RSEQ
-
-extern bool rseq_delay_resched(void);
-extern void rseq_delay_resched_fini(void);
-extern void rseq_delay_resched_tick(void);
-
-#else
-
-static inline bool rseq_delay_resched(void) { return false; }
-static inline void rseq_delay_resched_fini(void) { }
-static inline void rseq_delay_resched_tick(void) { }
-
-#endif
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
 
 #ifdef CONFIG_SCHED_CORE
 extern void sched_core_free(struct task_struct *tsk);

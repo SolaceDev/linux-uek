@@ -378,10 +378,11 @@ static ssize_t sched_fair_server_write(struct file *filp, const char __user *ubu
 			return  -EINVAL;
 		}
 
-		if (rq->cfs.h_nr_queued) {
-			update_rq_clock(rq);
-			dl_server_stop(&rq->fair_server);
-		}
+		if (!cpu_online(cpu_of(rq)))
+			return -EBUSY;
+
+		update_rq_clock(rq);
+		dl_server_stop(&rq->fair_server);
 
 		retval = dl_server_apply_params(&rq->fair_server, runtime, period, 0);
 
@@ -1218,9 +1219,6 @@ void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
 		P_SCHEDSTAT(nr_wakeups_affine_attempts);
 		P_SCHEDSTAT(nr_wakeups_passive);
 		P_SCHEDSTAT(nr_wakeups_idle);
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-		P_SCHEDSTAT(nr_preempt_delay_granted);
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
 
 		avg_atom = p->se.sum_exec_runtime;
 		if (nr_switches)

@@ -27,16 +27,16 @@
 #include "scd-smbus-trace.h"
 
 #define master_dbg(_master, _fmt, _args... )          \
-   dev_dbg(&(_master)->ctx->pdev->dev, "#%d " _fmt,    \
+   dev_dbg((_master)->ctx->dev, "#%d " _fmt,    \
            (_master)->id, ##_args)
 #define master_notice(_master, _fmt, _args... )       \
-   dev_notice(&(_master)->ctx->pdev->dev, "#%d " _fmt, \
+   dev_notice((_master)->ctx->dev, "#%d " _fmt, \
               (_master)->id, ##_args)
 #define master_warn(_master, _fmt, _args... )         \
-   dev_warn(&(_master)->ctx->pdev->dev, "#%d " _fmt " (%s:%d)",   \
+   dev_warn((_master)->ctx->dev, "#%d " _fmt " (%s:%d)",   \
             (_master)->id, ##_args, __func__, __LINE__)
 #define master_err(_master, _fmt, _args... )          \
-   dev_warn(&(_master)->ctx->pdev->dev, "#%d " _fmt " (%s:%d)",   \
+   dev_warn((_master)->ctx->dev, "#%d " _fmt " (%s:%d)",   \
            (_master)->id, ##_args, __func__, __LINE__)
 
 static int smbus_master_max_retries = MASTER_DEFAULT_MAX_RETRIES;
@@ -67,7 +67,7 @@ static void smbus_master_write_req(struct scd_smbus_master *master,
 {
    trace_scd_smbus_req_wr(master, req);
    master_dbg(master, "wr req " REQ_FMT "\n", REQ_ARGS(req) );
-   scd_write_register(master->ctx->pdev, master->req, req.reg);
+   scd_write_register(master->ctx->dev, master->req, req.reg);
 }
 
 static void smbus_master_write_cs(struct scd_smbus_master *master,
@@ -75,13 +75,13 @@ static void smbus_master_write_cs(struct scd_smbus_master *master,
 {
    trace_scd_smbus_cs_wr(master, cs);
    master_dbg(master, "wr cs " CS_FMT "\n", CS_ARGS(cs));
-   scd_write_register(master->ctx->pdev, master->cs, cs.reg);
+   scd_write_register(master->ctx->dev, master->cs, cs.reg);
 }
 
 static union smbus_ctrl_status_reg smbus_master_read_cs(struct scd_smbus_master *master)
 {
    union smbus_ctrl_status_reg cs;
-   cs.reg = scd_read_register(master->ctx->pdev, master->cs);
+   cs.reg = scd_read_register(master->ctx->dev, master->cs);
    trace_scd_smbus_cs_rd(master, cs);
    master_dbg(master, "rd cs " CS_FMT "\n", CS_ARGS(cs));
    return cs;
@@ -90,10 +90,27 @@ static union smbus_ctrl_status_reg smbus_master_read_cs(struct scd_smbus_master 
 static union smbus_response_reg __smbus_master_read_resp(struct scd_smbus_master *master)
 {
    union smbus_response_reg resp;
-   resp.reg = scd_read_register(master->ctx->pdev, master->resp);
+   resp.reg = scd_read_register(master->ctx->dev, master->resp);
    trace_scd_smbus_rsp_rd(master, resp);
    master_dbg(master, "rd rsp " RSP_FMT "\n", RSP_ARGS(resp));
    return resp;
+}
+
+static void smbus_master_write_sp(struct scd_smbus_master *master,
+                                  union smbus_speed_reg sp)
+{
+   trace_scd_smbus_sp_wr(master, sp);
+   master_dbg(master, "wr sp " SP_FMT "\n", SP_ARGS(sp));
+   scd_write_register(master->ctx->dev, master->sp, sp.reg);
+}
+
+static union smbus_speed_reg smbus_master_read_sp(struct scd_smbus_master *master)
+{
+   union smbus_speed_reg sp;
+   sp.reg = scd_read_register(master->ctx->dev, master->sp);
+   trace_scd_smbus_sp_rd(master, sp);
+   master_dbg(master, "rd sp " SP_FMT "\n", SP_ARGS(sp));
+   return sp;
 }
 
 static s32 smbus_check_resp(union smbus_response_reg resp, u32 tid)
@@ -499,11 +516,81 @@ out:
    return err ? : num;
 }
 
+static size_t scd_smbus_speed_get(struct scd_smbus *bus) {
+   union smbus_speed_reg sp = smbus_master_read_sp(bus->master);
+   return (sp.reg >> (bus->id * 2)) & 0x3;
+}
+
+static size_t scd_smbus_speed_get_human(struct scd_smbus *bus) {
+    return ((size_t[]){100000, 400000, 1000000, 0})[scd_smbus_speed_get(bus)];
+}
+
+static void scd_smbus_speed_set(struct scd_smbus *bus, u32 speed) {
+   union smbus_speed_reg sp = smbus_master_read_sp(bus->master);
+   u32 offset = bus->id * 2;
+   sp.reg = (~(0x3 << offset) & sp.reg) | ((speed & 0x3) << offset);
+   smbus_master_lock(bus->master);
+   smbus_master_write_sp(bus->master, sp);
+   smbus_master_unlock(bus->master);
+}
+
+static int scd_smbus_speed_set_human(struct scd_smbus *bus, size_t speed) {
+   u32 value = 0;
+
+   if (speed == 100000) {
+      value = 0;
+   } else if (speed == 400000) {
+      value = 1;
+   } else if (speed == 1000000) {
+      value = 2;
+   } else {
+      return -EINVAL;
+   }
+
+   scd_smbus_speed_set(bus, value);
+   return 0;
+}
+
+static ssize_t scd_bus_speed_show(struct device *dev,
+                                  struct device_attribute *attr, char *buf) {
+    struct scd_smbus *bus = i2c_get_adapdata(to_i2c_adapter(dev));
+    return sysfs_emit(buf, "%zu\n", scd_smbus_speed_get_human(bus));
+}
+
+static ssize_t scd_bus_speed_store(struct device *dev,
+                                   struct device_attribute *attr,
+                                   const char *buf, size_t count) {
+    struct scd_smbus *bus = i2c_get_adapdata(to_i2c_adapter(dev));
+    u32 value;
+    int ret;
+
+    ret = kstrtou32(buf, 10, &value);
+    if (ret < 0)
+        return ret;
+
+    ret = scd_smbus_speed_set_human(bus, value);
+    if (ret < 0)
+        return ret;
+
+    return count;
+}
+
+DEVICE_ATTR(bus_speed, 0644, scd_bus_speed_show, scd_bus_speed_store);
+
+static struct attribute *scd_bus_attrs[] = {
+    &dev_attr_bus_speed.attr,
+    NULL,
+};
+
+static const struct attribute_group scd_bus_attr_group = {
+   .attrs = scd_bus_attrs,
+};
+
+
 static struct i2c_algorithm scd_smbus_algorithm = {
    .master_xfer   = scd_smbus_master_xfer,
    .functionality = scd_smbus_func,
 };
-
 
 static int scd_smbus_bus_add(struct scd_smbus_master *master, int id)
 {
@@ -524,11 +611,18 @@ static int scd_smbus_bus_add(struct scd_smbus_master *master, int id)
    bus->adap.dev.parent = get_scd_dev(master->ctx);
    scnprintf(bus->adap.name,
              sizeof(bus->adap.name),
-             "SCD %s SMBus master %d bus %d", pci_name(master->ctx->pdev),
-             master->id, bus->id);
+             "SCD %s SMBus master %d bus %d",
+             get_scd_name(master->ctx), master->id, bus->id);
    i2c_set_adapdata(&bus->adap, bus);
    err = i2c_add_adapter(&bus->adap);
    if (err) {
+      kfree(bus);
+      return err;
+   }
+
+   err = devm_device_add_group(&bus->adap.dev, &scd_bus_attr_group);
+   if (err) {
+      i2c_del_adapter(&bus->adap);
       kfree(bus);
       return err;
    }
@@ -597,6 +691,17 @@ int scd_smbus_master_add(struct scd_context *ctx, u32 addr, u32 id, u32 bus_coun
       }
    }
 
+   /*
+    * The parse layer only bounds the base addr against res_size; the
+    * derived register offsets (req/cs/resp) are computed here and must
+    * also stay within the mapped resource.  Reject any addr whose
+    * highest derived offset would reach res_size (the register
+    * accessors require offset < mem_len == res_size).
+    */
+   if ((size_t)addr + SMBUS_RESPONSE_OFFSET >= ctx->res_size) {
+      return -EINVAL;
+   }
+
    master = kzalloc(sizeof(*master), GFP_KERNEL);
    if (!master) {
       return -ENOMEM;
@@ -608,7 +713,9 @@ int scd_smbus_master_add(struct scd_context *ctx, u32 addr, u32 id, u32 bus_coun
    master->req = addr + SMBUS_REQUEST_OFFSET;
    master->cs = addr + SMBUS_CONTROL_STATUS_OFFSET;
    master->resp = addr + SMBUS_RESPONSE_OFFSET;
+   master->sp = addr + SMBUS_SPEED_SELECT_OFFSET;
    master->max_retries = smbus_master_max_retries;
+   INIT_LIST_HEAD(&master->list);
    INIT_LIST_HEAD(&master->bus_list);
 
    for (i = 0; i < bus_count; ++i) {

@@ -133,7 +133,6 @@ struct rds_cong_map {
 	struct in6_addr		m_addr;
 	wait_queue_head_t	m_waitq;
 	struct list_head	m_conn_list;
-	struct wait_queue_head *m_wait_queue_ptr;
 	unsigned long		m_page_addrs[RDS_CONG_MAP_PAGES];
 	struct rds_net		*m_rns;
 };
@@ -939,13 +938,6 @@ struct rds_sock {
 	__be16			rs_conn_port;
 	struct rds_transport    *rs_transport;
 
-	/*
-	 * rds_sendmsg caches the conn and conn_path it used the last time
-	 * around. This helps avoid costly lookups.
-	 */
-	struct rds_connection	*rs_conn;
-	struct rds_conn_path	*rs_conn_path;
-
 	/* flag indicating we were congested or not */
 	int			rs_congested;
 	/* seen congestion (ENOBUFS) when sending? */
@@ -1000,7 +992,14 @@ struct rds_sock {
 				rs_cong_monitor;
 	int			poison;
 
-	u8                      rs_tos;
+	/*
+	 * Socket default TOS is user-defined via SIOCRDSSETTOS. It must
+	 * be configured before initiating traffic; once sendmsg() uses the
+	 * socket, TOS is frozen and can no longer be changed. Outgoing
+	 * traffic uses this default unless a per-message override is given.
+	 */
+	u8			rs_tos;
+	bool			rs_tos_frozen;
 
 	/* Socket receive path trace points*/
 	u8			rs_rx_traces;
@@ -1167,8 +1166,7 @@ static inline void __rds_wake_sk_sleep(struct sock *sk)
 
 int rds_check_qos_threshold(struct rds_statistics __percpu *stats, u8 tos,
 			    size_t pauload_len);
-#define RDS_NMBR_WAITQ BIT(6)
-extern struct wait_queue_head rds_poll_waitq[RDS_NMBR_WAITQ];
+extern wait_queue_head_t rds_poll_waitq;
 
 void debug_sock_hold(struct sock *sock);
 void debug_sock_put(struct sock *sock);

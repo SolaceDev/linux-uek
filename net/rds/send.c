@@ -486,7 +486,7 @@ int rds_send_xmit(struct rds_conn_path *cp, enum rds_send_xmit_mode xmit_mode)
 				cp->cp_xmit_data_sent = 0;
 				spin_unlock_irqrestore(&cp->cp_lock, flags);
 				rds_message_put(rm);
-				break;
+				continue;
 			}
 			rds_set_rm_flag_bit(rm, RDS_MSG_MAPPED);
 			spin_unlock_irqrestore(&cp->cp_lock, flags);
@@ -517,7 +517,7 @@ int rds_send_xmit(struct rds_conn_path *cp, enum rds_send_xmit_mode xmit_mode)
 				cp->cp_xmit_data_sent = 0;
 				spin_unlock_irqrestore(&cp->cp_lock, flags);
 				rds_message_put(rm);
-				break;
+				continue;
 			}
 			rds_set_rm_flag_bit(rm, RDS_MSG_MAPPED);
 			spin_unlock_irqrestore(&cp->cp_lock, flags);
@@ -713,9 +713,10 @@ static inline void do_trace_rds_send_complete(struct rds_message *rm,
 					      struct rds_sock *rs,
 					      char *reason, int status)
 {
-	trace_rds_send_complete(rm, rs, rs ? rs->rs_conn : NULL, NULL,
-				rs && rs->rs_conn ? &rs->rs_conn->c_laddr :
-						    NULL,
+	struct rds_connection *conn = rm ? rm->m_inc.i_conn : NULL;
+
+	trace_rds_send_complete(rm, rs, conn, NULL,
+				conn ? &conn->c_laddr : NULL,
 				rm ? &rm->m_daddr : NULL, reason, status);
 }
 
@@ -1275,13 +1276,15 @@ out:
  * rds_message is getting to be quite complicated, and we'd like to allocate
  * it all in one go. This figures out how big it needs to be up front.
  */
-static int rds_rm_size(struct msghdr *msg, int data_len, struct rds_iov_vector_arr *iov_arr)
+static int rds_rm_size(struct msghdr *msg, int data_len,
+		       struct rds_iov_vector_arr *iov_arr)
 {
 	struct cmsghdr *cmsg;
 	int size = 0;
 	int cmsg_groups = 0;
 	int retval;
 	struct rds_iov_vector *iov, *tmp_iov;
+	bool atomic_seen = false;
 
 	for_each_cmsghdr(cmsg, msg) {
 		if (!CMSG_OK(msg, cmsg))
@@ -1326,6 +1329,13 @@ static int rds_rm_size(struct msghdr *msg, int data_len, struct rds_iov_vector_a
 
 		case RDS_CMSG_ATOMIC_CSWP:
 		case RDS_CMSG_ATOMIC_FADD:
+			if (cmsg->cmsg_len <
+			    CMSG_LEN(sizeof(struct rds_atomic_args)))
+				return -EINVAL;
+			if (atomic_seen)
+				return -EINVAL;
+			atomic_seen = true;
+
 			cmsg_groups |= 1;
 			size += sizeof(struct scatterlist);
 			break;
@@ -1401,10 +1411,11 @@ static int rds_get_cmsg_tos_override(struct msghdr *msg, int default_tos)
 	return tos;
 }
 
-static inline int rds_rdma_bytes(struct msghdr *msg, size_t *rdma_bytes)
+static inline int rds_rdma_bytes(struct msghdr *msg, u64 *rdma_bytes)
 {
 	struct rds_rdma_args *args;
 	struct cmsghdr *cmsg;
+	bool args_seen = false;
 
 	for_each_cmsghdr(cmsg, msg) {
 		if (!CMSG_OK(msg, cmsg))
@@ -1417,8 +1428,12 @@ static inline int rds_rdma_bytes(struct msghdr *msg, size_t *rdma_bytes)
 			if (cmsg->cmsg_len <
 			    CMSG_LEN(sizeof(struct rds_rdma_args)))
 				return -EINVAL;
+			if (args_seen)
+				return -EINVAL;
+			args_seen = true;
+
 			args = CMSG_DATA(cmsg);
-			*rdma_bytes += args->remote_vec.bytes;
+			*rdma_bytes = args->remote_vec.bytes;
 		}
 	}
 
@@ -1441,7 +1456,8 @@ int rds_sendmsg(struct socket *sock, struct msghdr *msg, size_t payload_len)
 	int queued = 0;
 	int nonblock = msg->msg_flags & MSG_DONTWAIT;
 	long timeo = sock_sndtimeo(sk, nonblock);
-	size_t total_payload_len = payload_len, rdma_payload_len = 0;
+	size_t total_payload_len = payload_len;
+	u64 rdma_payload_len = 0;
 	struct rds_conn_path *cpath = NULL;
 	struct rs_buf_info *bufi;
 	struct rds_net *rns;
@@ -1696,42 +1712,29 @@ int rds_sendmsg(struct socket *sock, struct msghdr *msg, size_t payload_len)
 		goto out;
 	}
 
-	/* rds_conn_create has a spinlock that runs with IRQ off.
-	 * Caching the conn in the socket helps a lot.
-	 * But with connection-reaping and no locks, these checks
-	 * are subject to race conditions to be addressed later.
-	 */
-	smp_rmb(); /* for rs_conn->c_destroy_in_prog */
-	if (rs->rs_conn && !rs->rs_conn->c_destroy_in_prog &&
-	    ipv6_addr_equal(&rs->rs_conn->c_faddr, &daddr) &&
-	    tos == rs->rs_conn->c_tos) {
-		conn = rs->rs_conn;
-		cpath = rs->rs_conn_path;
-	} else {
-		conn = rds_conn_create_outgoing(sock_net(sock->sk),
-						&rs->rs_bound_addr, &daddr,
-						rs->rs_transport, tos,
-						sock->sk->sk_allocation,
-						scope_id);
-		if (IS_ERR(conn)) {
-			ret = PTR_ERR(conn);
-			reason = "conn creation error";
-			conn = NULL;
-			goto out;
-		}
-		if (conn->c_trans->t_mp_capable) {
-			/* Use c_path[0] until we learn that
-			 * the peer supports more (c_npaths > 1)
-			 */
-			cpath = &conn->c_path[RDS_MPATH_HASH(rs, conn->c_npaths ? : 1)];
-		} else {
-			cpath = &conn->c_path[0];
-		}
-		if (rs->rs_conn)
-			rds_conn_put(rs->rs_conn); /* rs_conn overwritten */
-		rs->rs_conn = conn; /* put new conn in rds_sock_put() */
-		rs->rs_conn_path = cpath;
+	/* rds_conn_create has a spinlock that runs with IRQ off. */
+	conn = rds_conn_create_outgoing(sock_net(sock->sk),
+					&rs->rs_bound_addr, &daddr,
+					rs->rs_transport, tos,
+					sock->sk->sk_allocation,
+					scope_id);
+	if (IS_ERR(conn)) {
+		ret = PTR_ERR(conn);
+		reason = "conn creation error";
+		conn = NULL;
+		goto out;
 	}
+	if (conn->c_trans->t_mp_capable) {
+		/* Use c_path[0] until we learn that
+		 * the peer supports more (c_npaths > 1)
+		 */
+		cpath = &conn->c_path[RDS_MPATH_HASH(rs, conn->c_npaths ? : 1)];
+	} else {
+		cpath = &conn->c_path[0];
+	}
+
+	/* Freeze default TOS via SIOCRDSSETTOS */
+	WRITE_ONCE(rs->rs_tos_frozen, 1);
 
 	smp_rmb(); /* Pairs with smp_mb() in rds_conn_destroy() */
 	if (conn->c_destroy_in_prog) {
@@ -1882,6 +1885,8 @@ out_ret:
 			kfree(iov->iv_nr_pages);
 		}
 	kfree(iov_arr.iva_iov);
+	if (conn)
+		rds_conn_put(conn); /* for rds_conn_create_outgoing/lookup */
 	return ret;
 }
 

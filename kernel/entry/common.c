@@ -6,6 +6,7 @@
 #include <linux/highmem.h>
 #include <linux/jump_label.h>
 #include <linux/kmsan.h>
+#include <linux/rseq_entry.h>
 #include <linux/livepatch.h>
 #include <linux/audit.h>
 #include <linux/tick.h>
@@ -40,6 +41,14 @@ long syscall_trace_enter(struct pt_regs *regs, long syscall,
 		if (syscall_user_dispatch(regs))
 			return -1L;
 	}
+
+	/*
+	 * User space got a time slice extension granted and relinquishes
+	 * the CPU. The work stops the slice timer to avoid an extra round
+	 * through hrtimer_interrupt().
+	 */
+	if (work & SYSCALL_WORK_SYSCALL_RSEQ_SLICE)
+		rseq_syscall_enter_work(syscall);
 
 	/* Handle ptrace */
 	if (work & (SYSCALL_WORK_SYSCALL_TRACE | SYSCALL_WORK_SYSCALL_EMU)) {
@@ -83,19 +92,16 @@ noinstr void syscall_enter_from_user_mode_prepare(struct pt_regs *regs)
 /* Workaround to allow gradual conversion of architecture code */
 void __weak arch_do_signal_or_restart(struct pt_regs *regs) { }
 
+/* TIF bits, which prevent a time slice extension. */
+#define TIF_SLICE_EXT_DENY	(EXIT_TO_USER_MODE_WORK & ~_TIF_NEED_RESCHED)
+
 /**
  * exit_to_user_mode_loop - do any pending work before leaving to user space
  * @regs:	Pointer to pt_regs on entry stack
  * @ti_work:	TIF work flags as read by the caller
  */
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-__always_inline unsigned long exit_to_user_mode_loop(struct pt_regs *regs,
-						     unsigned long ti_work,
-						     bool irq)
-#else
 __always_inline unsigned long exit_to_user_mode_loop(struct pt_regs *regs,
 						     unsigned long ti_work)
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
 {
 	/*
 	 * Before returning to user space ensure that all pending work
@@ -106,11 +112,7 @@ __always_inline unsigned long exit_to_user_mode_loop(struct pt_regs *regs,
 		local_irq_enable_exit_to_user(ti_work);
 
 		if (ti_work & _TIF_NEED_RESCHED) {
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-			if (irq && rseq_delay_resched())
-				clear_tsk_need_resched(current);
-			else
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
+			if (!rseq_grant_slice_extension(ti_work & TIF_SLICE_EXT_DENY))
 				schedule();
 		}
 
@@ -220,12 +222,7 @@ static __always_inline void __syscall_exit_to_user_mode_work(struct pt_regs *reg
 {
 	syscall_exit_to_user_mode_prepare(regs);
 	local_irq_disable_exit_to_user();
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-	exit_to_user_mode_prepare(regs, false);
-#else
 	exit_to_user_mode_prepare(regs);
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
-
 }
 
 void syscall_exit_to_user_mode_work(struct pt_regs *regs)
@@ -244,16 +241,14 @@ __visible noinstr void syscall_exit_to_user_mode(struct pt_regs *regs)
 noinstr void irqentry_enter_from_user_mode(struct pt_regs *regs)
 {
 	enter_from_user_mode(regs);
+	rseq_note_user_irq_entry();
 }
 
 noinstr void irqentry_exit_to_user_mode(struct pt_regs *regs)
 {
 	instrumentation_begin();
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-	exit_to_user_mode_prepare(regs, true);
-#else
 	exit_to_user_mode_prepare(regs);
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
+	rseq_irqentry_exit_to_user_mode();
 	instrumentation_end();
 	exit_to_user_mode();
 }

@@ -66,6 +66,18 @@ static inline void rseq_migrate(struct task_struct *t)
 	rseq_set_notify_resume(t);
 }
 
+static inline void rseq_reset(struct task_struct *t)
+{
+	/* For memset, protect against preemption and membarrier IPI */
+	guard(irqsave)();
+	t->rseq = NULL;
+	t->rseq_len = 0;
+	t->rseq_sig = 0;
+	t->rseq_event_mask = 0;
+	t->rseq_slice_expires = 0;
+	memset(&t->rseq_slice, 0, sizeof(t->rseq_slice));
+}
+
 /*
  * If parent process has a registered restartable sequences area, the
  * child inherits. Unregister rseq for a clone with CLONE_VM set.
@@ -73,24 +85,34 @@ static inline void rseq_migrate(struct task_struct *t)
 static inline void rseq_fork(struct task_struct *t, unsigned long clone_flags)
 {
 	if (clone_flags & CLONE_VM) {
-		t->rseq = NULL;
-		t->rseq_len = 0;
-		t->rseq_sig = 0;
-		t->rseq_event_mask = 0;
+		rseq_reset(t);
 	} else {
 		t->rseq = current->rseq;
 		t->rseq_len = current->rseq_len;
 		t->rseq_sig = current->rseq_sig;
 		t->rseq_event_mask = current->rseq_event_mask;
+		t->rseq_slice_expires = current->rseq_slice_expires;
+		t->rseq_slice = current->rseq_slice;
 	}
 }
 
 static inline void rseq_execve(struct task_struct *t)
 {
-	t->rseq = NULL;
-	t->rseq_len = 0;
-	t->rseq_sig = 0;
-	t->rseq_event_mask = 0;
+	rseq_reset(t);
+}
+
+/*
+ * Value returned by getauxval(AT_RSEQ_ALIGN) and expected by rseq
+ * registration. This is the active rseq area size rounded up to next
+ * power of 2, which guarantees that the rseq structure will always be
+ * aligned on the nearest power of two large enough to contain it, even
+ * as it grows.
+ *
+ * XXX for UEK use sizeof(struct rseq) + 1 which is the user visible size.
+ */
+static inline unsigned int rseq_alloc_align(void)
+{
+	return 1U << get_count_order(sizeof(struct rseq) + 1);
 }
 
 #else
@@ -132,5 +154,16 @@ static inline void rseq_syscall(struct pt_regs *regs)
 }
 
 #endif
+
+#ifdef CONFIG_RSEQ_SLICE_EXTENSION
+void rseq_syscall_enter_work(long syscall);
+int rseq_slice_extension_prctl(unsigned long arg2, unsigned long arg3);
+#else /* CONFIG_RSEQ_SLICE_EXTENSION */
+static inline void rseq_syscall_enter_work(long syscall) { }
+static inline int rseq_slice_extension_prctl(unsigned long arg2, unsigned long arg3)
+{
+	return -ENOTSUPP;
+}
+#endif /* !CONFIG_RSEQ_SLICE_EXTENSION */
 
 #endif /* _LINUX_RSEQ_H */

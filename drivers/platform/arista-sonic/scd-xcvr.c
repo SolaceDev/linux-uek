@@ -28,7 +28,7 @@ static u32 scd_xcvr_read_register(const struct scd_xcvr_attribute *gpio)
    int i;
    u32 reg;
 
-   reg = scd_read_register(gpio->xcvr->ctx->pdev, gpio->xcvr->addr);
+   reg = scd_read_register(gpio->xcvr->ctx->dev, gpio->xcvr->addr);
    for (i = 0; i < XCVR_ATTR_MAX_COUNT; i++) {
       if (xcvr->attr[i].clear_on_read) {
          xcvr->attr[i].clear_on_read_value =
@@ -52,7 +52,7 @@ static ssize_t attribute_xcvr_get(struct device *dev,
       res = gpio->clear_on_read_value | res;
       gpio->clear_on_read_value = 0;
    }
-   return sprintf(buf, "%u\n", res);
+   return sysfs_emit(buf, "%u\n", res);
 }
 
 static ssize_t attribute_xcvr_set(struct device *dev,
@@ -83,7 +83,7 @@ static ssize_t attribute_xcvr_set(struct device *dev,
       else
          reg &= ~(1 << gpio->bit);
    }
-   scd_write_register(gpio->xcvr->ctx->pdev, gpio->xcvr->addr, reg);
+   scd_write_register(gpio->xcvr->ctx->dev, gpio->xcvr->addr, reg);
 
    return count;
 }
@@ -120,7 +120,12 @@ static int scd_xcvr_register(struct scd_xcvr *xcvr, const struct gpio_cfg *cfgs,
    for (i = 0; i < gpio_count; i++) {
       gpio = cfgs[i];
       name_size = strlen(xcvr->name) + strlen(gpio.name) + 2;
-      BUG_ON(name_size > GPIO_NAME_MAX_SZ);
+      if (name_size > GPIO_NAME_MAX_SZ) {
+         dev_err(get_scd_dev(xcvr->ctx),
+                 "xcvr attribute name too long for %s_%s",
+                 xcvr->name, gpio.name);
+         return -ENAMETOOLONG;
+      }
       snprintf(name, name_size, "%s_%s", xcvr->name, gpio.name);
       if (gpio.read_only) {
          SCD_RO_XCVR_ATTR(xcvr->attr[gpio.bitpos], name, name_size, xcvr,
@@ -187,8 +192,17 @@ static int scd_xcvr_add(struct scd_context *ctx, const char *prefix,
    return 0;
 
 fail:
-   if (xcvr)
+   if (xcvr) {
+      /*
+       * scd_xcvr_register() may have created some sysfs files before
+       * failing; each embeds a pointer back into xcvr. Remove them
+       * before freeing xcvr so no dangling attribute survives.
+       * scd_xcvr_unregister() only touches slots whose back-pointer was
+       * set, so it is safe even when nothing was registered.
+       */
+      scd_xcvr_unregister(ctx, xcvr);
       kfree(xcvr);
+   }
 
    return err;
 }

@@ -1152,8 +1152,13 @@ static int optoe_probe(struct i2c_client *client)
 			write_max = I2C_SMBUS_BLOCK_MAX;
 		optoe->write_max = write_max;
 
-		/* buffer (data + address at the beginning) */
-		optoe->writebuf = kmalloc(write_max + 2, GFP_KERNEL);
+		/*
+		 * Buffer (data + address at the beginning).  Size it for the
+		 * legal maximum of write_max (OPTOE_PAGE_SIZE), since
+		 * write_max is mutable at runtime via sysfs and must never
+		 * be allowed to outgrow this allocation.
+		 */
+		optoe->writebuf = kmalloc(OPTOE_PAGE_SIZE + 2, GFP_KERNEL);
 		if (!optoe->writebuf) {
 			err = -ENOMEM;
 			goto exit_kfree;
@@ -1175,6 +1180,14 @@ static int optoe_probe(struct i2c_client *client)
 		}
 	}
 
+	/*
+	 * Wire up the client's private data before publishing any sysfs
+	 * files.  optoe is fully initialised at this point, and the bin/attr
+	 * handlers dereference i2c_get_clientdata() without a NULL check, so
+	 * this must happen before the files become openable.
+	 */
+	i2c_set_clientdata(client, optoe);
+
 	/* create the sysfs eeprom file */
 	err = sysfs_create_bin_file(&client->dev.kobj, &optoe->bin);
 	if (err)
@@ -1185,7 +1198,7 @@ static int optoe_probe(struct i2c_client *client)
 	err = sysfs_create_group(&client->dev.kobj, &optoe->attr_group);
 	if (err) {
 		dev_err(&client->dev, "failed to create sysfs attribute group.\n");
-		goto err_struct;
+		goto err_bin_cleanup;
 	}
 
 #ifdef EEPROM_CLASS
@@ -1197,8 +1210,6 @@ static int optoe_probe(struct i2c_client *client)
 		goto err_sysfs_cleanup;
 	}
 #endif
-
-	i2c_set_clientdata(client, optoe);
 
 	dev_info(&client->dev, "%zu byte %s EEPROM, %s\n",
 		optoe->bin.size, client->name,
@@ -1216,8 +1227,10 @@ static int optoe_probe(struct i2c_client *client)
 #ifdef EEPROM_CLASS
 err_sysfs_cleanup:
 	sysfs_remove_group(&client->dev.kobj, &optoe->attr_group);
-	sysfs_remove_bin_file(&client->dev.kobj, &optoe->bin);
 #endif
+
+err_bin_cleanup:
+	sysfs_remove_bin_file(&client->dev.kobj, &optoe->bin);
 
 err_struct:
 	if (num_addresses == 2) {
@@ -1229,6 +1242,7 @@ err_struct:
 
 	kfree(optoe->writebuf);
 exit_kfree:
+	i2c_set_clientdata(client, NULL);
 	kfree(optoe);
 exit:
 	dev_dbg(&client->dev, "probe error %d\n", err);

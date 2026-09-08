@@ -537,6 +537,8 @@ static int ib_uverbs_alloc_shpd(struct uverbs_attr_bundle *attrs)
 	shpd->device = ib_dev;
 	shpd->share_key = cmd.share_key;
 	shpd->ref_count = 1;
+	shpd->owner = current_euid();
+	shpd->user_ns = get_user_ns(current_user_ns());
 
 	mutex_lock(&ib_uverbs_shpd_idr_lock);
 	shpd->idr_id = idr_alloc(&ib_uverbs_shpd_idr, shpd, 0, 0, GFP_KERNEL);
@@ -568,6 +570,7 @@ err_copy:
 	mutex_unlock(&ib_uverbs_shpd_idr_lock);
 
 err_idr:
+	put_user_ns(shpd->user_ns);
 	ib_dev->ops.remove_shpd(ib_dev, shpd, 1);
 
 err_pd:
@@ -581,6 +584,7 @@ void ib_uverbs_deref_shpd(struct ib_shpd *shpd)
 	mutex_lock(&ib_uverbs_shpd_idr_lock);
 	if (--shpd->ref_count <= 0) {
 		idr_remove(&ib_uverbs_shpd_idr, shpd->idr_id);
+		put_user_ns(shpd->user_ns);
 		shpd->device->ops.remove_shpd(shpd->device, shpd, 0);
 	}
 	mutex_unlock(&ib_uverbs_shpd_idr_lock);
@@ -610,14 +614,23 @@ static int ib_uverbs_share_pd(struct uverbs_attr_bundle *attrs)
 	shpd = idr_find(&ib_uverbs_shpd_idr, cmd.shpd_handle);
 	if (!shpd) {
 		mutex_unlock(&ib_uverbs_shpd_idr_lock);
-		return -ENOENT;
+		return -EINVAL;
 	}
 	shpd->ref_count++;
 	mutex_unlock(&ib_uverbs_shpd_idr_lock);
 
 	/* check if the key matches */
 	if (shpd->share_key != cmd.share_key) {
-		pr_warn("WARNING : invalid shared pd key\n");
+		ret = -EINVAL;
+		goto err_deref_shpd;
+	}
+
+	if (shpd->user_ns != current_user_ns()) {
+		ret = -EINVAL;
+		goto err_deref_shpd;
+	}
+
+	if (!uid_eq(shpd->owner, current_euid())) {
 		ret = -EINVAL;
 		goto err_deref_shpd;
 	}
@@ -3432,7 +3445,7 @@ static int ib_uverbs_ex_create_flow(struct uverbs_attr_bundle *attrs)
 	if (cmd.comp_mask)
 		return -EINVAL;
 
-	if (!capable(CAP_NET_RAW))
+	if (!rdma_uattrs_has_raw_cap(attrs))
 		return -EPERM;
 
 	if (cmd.flow_attr.flags >= IB_FLOW_ATTR_FLAGS_RESERVED)

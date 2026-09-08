@@ -8,6 +8,7 @@
 #include "en/fs_tt_redirect.h"
 #include <linux/list.h>
 #include <linux/spinlock.h>
+#include <net/netdev_lock.h>
 
 struct mlx5e_ptp_fs {
 	struct mlx5_flow_handle *l2_rule;
@@ -339,8 +340,6 @@ static int mlx5e_ptp_alloc_txqsq(struct mlx5e_ptp *c, int txq_ix,
 	sq->stats     = &c->priv->ptp_stats.sq[tc];
 	sq->ptpsq     = ptpsq;
 	INIT_WORK(&sq->recover_work, mlx5e_tx_err_cqe_work);
-	if (!MLX5_CAP_ETH(mdev, wqe_vlan_insert))
-		set_bit(MLX5E_SQ_STATE_VLAN_NEED_L2_INLINE, &sq->state);
 	sq->stop_room = param->stop_room;
 	sq->ptp_cyc2time = mlx5_sq_ts_translator(mdev);
 
@@ -892,7 +891,7 @@ int mlx5e_ptp_open(struct mlx5e_priv *priv, struct mlx5e_params *params,
 	if (err)
 		goto err_free;
 
-	netif_napi_add(netdev, &c->napi, mlx5e_ptp_napi_poll);
+	netif_napi_add_locked(netdev, &c->napi, mlx5e_ptp_napi_poll);
 
 	mlx5e_ptp_build_params(c, cparams, params);
 
@@ -910,7 +909,7 @@ int mlx5e_ptp_open(struct mlx5e_priv *priv, struct mlx5e_params *params,
 	return 0;
 
 err_napi_del:
-	netif_napi_del(&c->napi);
+	netif_napi_del_locked(&c->napi);
 err_free:
 	kvfree(cparams);
 	kvfree(c);
@@ -920,7 +919,7 @@ err_free:
 void mlx5e_ptp_close(struct mlx5e_ptp *c)
 {
 	mlx5e_ptp_close_queues(c);
-	netif_napi_del(&c->napi);
+	netif_napi_del_locked(&c->napi);
 
 	kvfree(c);
 }
@@ -929,7 +928,7 @@ void mlx5e_ptp_activate_channel(struct mlx5e_ptp *c)
 {
 	int tc;
 
-	napi_enable(&c->napi);
+	napi_enable_locked(&c->napi);
 
 	if (test_bit(MLX5E_PTP_STATE_TX, c->state)) {
 		for (tc = 0; tc < c->num_tc; tc++)
@@ -957,7 +956,7 @@ void mlx5e_ptp_deactivate_channel(struct mlx5e_ptp *c)
 			mlx5e_deactivate_txqsq(&c->ptpsq[tc].txqsq);
 	}
 
-	napi_disable(&c->napi);
+	napi_disable_locked(&c->napi);
 }
 
 int mlx5e_ptp_get_rqn(struct mlx5e_ptp *c, u32 *rqn)

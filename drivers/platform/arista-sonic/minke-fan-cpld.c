@@ -1135,11 +1135,13 @@ static int cpld_init(struct cpld_data *cpld)
       slot->present = !!(cpld->present & (1 << i));
       slot->ok = !!(cpld->ok & (1 << i));
       slot->fan_id = &cpld->info->fan_ids[FAN_ID_UNKNOWN];
-
       if (slot->present) {
          cpld_read_slot_id(slot);
       }
+   }
 
+   for (i = 0; i < cpld->info->slot_count; ++i) {
+      slot = slot_from_cpld(cpld, i);
       for (j = 0; j < cpld->fans_per_slot; j++) {
          fan = &slot->fans[j];
          fan->slot = slot;
@@ -1186,11 +1188,15 @@ cpld_remove(struct i2c_client *client)
 {
    struct cpld_data *cpld = i2c_get_clientdata(client);
 
-   mutex_lock(&cpld->lock);
+   /*
+    * Do not hold cpld->lock across cancel_delayed_work_sync():
+    * cpld_work_fn() takes the same lock, so cancelling a running work
+    * item while holding it would self-deadlock. The sync guarantees no
+    * work runs afterwards, so the following teardown needs no lock.
+    */
    cancel_delayed_work_sync(&cpld->dwork);
-   mutex_unlock(&cpld->lock);
 
-   cpld_leds_unregister(cpld, cpld->info->fan_count);
+   cpld_leds_unregister(cpld, cpld->info->slot_count);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
    return 0;
@@ -1210,7 +1216,7 @@ static int cpld_probe(struct i2c_client *client
    int i;
 
    if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA)) {
-      pali_err(cpld, "adapter doesn't support byte transactions\n");
+      dev_err(&client->dev, "adapter doesn't support byte transactions\n");
       return -ENODEV;
    }
 

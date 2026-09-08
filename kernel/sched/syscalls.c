@@ -1419,16 +1419,6 @@ static void do_sched_yield(void)
  */
 SYSCALL_DEFINE0(sched_yield)
 {
-
-#ifndef WITHOUT_ORACLE_EXTENSIONS
-#ifdef CONFIG_RSEQ
-	if (current->rseq_sched_delay) {
-		schedule();
-		return 0;
-	}
-#endif
-#endif /* !WITHOUT_ORACLE_EXTENSIONS */
-
 	do_sched_yield();
 	return 0;
 }

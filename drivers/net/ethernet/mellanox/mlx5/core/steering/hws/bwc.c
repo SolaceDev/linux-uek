@@ -205,6 +205,7 @@ static int hws_bwc_matcher_move(struct mlx5hws_bwc_matcher *bwc_matcher)
 	ret = mlx5hws_matcher_resize_set_target(old_matcher, new_matcher);
 	if (ret) {
 		mlx5hws_err(ctx, "Rehash error: failed setting resize target\n");
+		mlx5hws_matcher_destroy(new_matcher);
 		return ret;
 	}
 
@@ -561,6 +562,70 @@ static void hws_bwc_rule_cnt_dec(struct mlx5hws_bwc_rule *bwc_rule)
 		atomic_dec(&bwc_matcher->tx_size.num_of_rules);
 }
 
+static int
+hws_bwc_matcher_rehash_shrink(struct mlx5hws_bwc_matcher *bwc_matcher)
+{
+	struct mlx5hws_bwc_matcher_size *rx_size = &bwc_matcher->rx_size;
+	struct mlx5hws_bwc_matcher_size *tx_size = &bwc_matcher->tx_size;
+
+	/* It is possible that another thread has added a rule.
+	 * Need to check again if we really need rehash/shrink.
+	 */
+	if (atomic_read(&rx_size->num_of_rules) ||
+	    atomic_read(&tx_size->num_of_rules))
+		return 0;
+
+	/* If the current matcher RX/TX size is already at its initial size. */
+	if (rx_size->size_log == MLX5HWS_BWC_MATCHER_INIT_SIZE_LOG &&
+	    tx_size->size_log == MLX5HWS_BWC_MATCHER_INIT_SIZE_LOG)
+		return 0;
+
+	/* Now we've done all the checking - do the shrinking:
+	 *  - reset match RTC size to the initial size
+	 *  - create new matcher
+	 *  - move the rules, which will not do anything as the matcher is empty
+	 *  - destroy the old matcher
+	 */
+
+	rx_size->size_log = MLX5HWS_BWC_MATCHER_INIT_SIZE_LOG;
+	tx_size->size_log = MLX5HWS_BWC_MATCHER_INIT_SIZE_LOG;
+
+	return hws_bwc_matcher_move(bwc_matcher);
+}
+
+static int hws_bwc_rule_cnt_dec_with_shrink(struct mlx5hws_bwc_rule *bwc_rule,
+					    u16 bwc_queue_idx)
+{
+	struct mlx5hws_bwc_matcher *bwc_matcher = bwc_rule->bwc_matcher;
+	struct mlx5hws_context *ctx = bwc_matcher->matcher->tbl->ctx;
+	struct mutex *queue_lock; /* Protect the queue */
+	int ret;
+
+	hws_bwc_rule_cnt_dec(bwc_rule);
+
+	if (atomic_read(&bwc_matcher->rx_size.num_of_rules) ||
+	    atomic_read(&bwc_matcher->tx_size.num_of_rules))
+		return 0;
+
+	/* Matcher has no more rules - shrink it to save ICM. */
+
+	queue_lock = hws_bwc_get_queue_lock(ctx, bwc_queue_idx);
+	mutex_unlock(queue_lock);
+
+	hws_bwc_lock_all_queues(ctx);
+	ret = hws_bwc_matcher_rehash_shrink(bwc_matcher);
+	hws_bwc_unlock_all_queues(ctx);
+
+	mutex_lock(queue_lock);
+
+	if (unlikely(ret))
+		mlx5hws_err(ctx,
+			    "BWC rule deletion: shrinking empty matcher failed (%d)\n",
+			    ret);
+
+	return ret;
+}
+
 int mlx5hws_bwc_rule_destroy_simple(struct mlx5hws_bwc_rule *bwc_rule)
 {
 	struct mlx5hws_bwc_matcher *bwc_matcher = bwc_rule->bwc_matcher;
@@ -577,8 +642,8 @@ int mlx5hws_bwc_rule_destroy_simple(struct mlx5hws_bwc_rule *bwc_rule)
 	mutex_lock(queue_lock);
 
 	ret = hws_bwc_rule_destroy_hws_sync(bwc_rule, &attr);
-	hws_bwc_rule_cnt_dec(bwc_rule);
 	hws_bwc_rule_list_remove(bwc_rule);
+	hws_bwc_rule_cnt_dec_with_shrink(bwc_rule, idx);
 
 	mutex_unlock(queue_lock);
 
@@ -999,10 +1064,23 @@ int mlx5hws_bwc_rule_create_simple(struct mlx5hws_bwc_rule *bwc_rule,
 		return 0; /* rule inserted successfully */
 	}
 
+	/* Rule insertion could fail due to queue being full, timeout, or
+	 * matcher in resize. In such cases, no point in trying to rehash.
+	 */
+	if (ret == -EBUSY || ret == -ETIMEDOUT || ret == -EAGAIN) {
+		mutex_unlock(queue_lock);
+		mlx5hws_err(ctx,
+			    "BWC rule insertion failed - %s (%d)\n",
+			    ret == -EBUSY ? "queue is full" :
+			    ret == -ETIMEDOUT ? "timeout" :
+			    ret == -EAGAIN ? "matcher in resize" : "N/A",
+			    ret);
+		hws_bwc_rule_cnt_dec(bwc_rule);
+		return ret;
+	}
+
 	/* At this point the rule wasn't added.
 	 * It could be because there was collision, or some other problem.
-	 * If we don't dive deeper than API, the only thing we know is that
-	 * the status of completion is RTE_FLOW_OP_ERROR.
 	 * Try rehash by size and insert rule again - last chance.
 	 */
 	if (!bwc_rule->skip_rx)

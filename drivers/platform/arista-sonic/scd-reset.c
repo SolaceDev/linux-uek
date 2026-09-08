@@ -27,9 +27,9 @@ static ssize_t attribute_reset_get(struct device *dev,
                                    struct device_attribute *devattr, char *buf)
 {
    const struct scd_reset_attribute *reset = to_scd_reset_attr(devattr);
-   u32 reg = scd_read_register(reset->ctx->pdev, reset->addr);
+   u32 reg = scd_read_register(reset->ctx->dev, reset->addr);
    u32 res = !!(reg & (1 << reset->bit));
-   return sprintf(buf, "%u\n", res);
+   return sysfs_emit(buf, "%u\n", res);
 }
 
 // write 1 -> set, 0 -> clear
@@ -54,7 +54,7 @@ static ssize_t attribute_reset_set(struct device *dev,
       offset = RESET_CLEAR_OFFSET;
 
    reg = 1 << reset->bit;
-   scd_write_register(reset->ctx->pdev, reset->addr + offset, reg);
+   scd_write_register(reset->ctx->dev, reset->addr + offset, reg);
 
    return count;
 }
@@ -101,7 +101,7 @@ int scd_reset_add(struct scd_context *ctx, const char *name, u32 addr, u32 bitpo
       return -ENOMEM;
    }
 
-   snprintf(reset->name, sizeof_field(typeof(*reset), name), name);
+   snprintf(reset->name, sizeof_field(typeof(*reset), name), "%s", name);
    reset->attr = (struct scd_reset_attribute)SCD_RESET_ATTR(
                                                 reset->name, ctx, addr, bitpos);
 

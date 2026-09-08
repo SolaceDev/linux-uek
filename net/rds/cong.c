@@ -102,10 +102,7 @@ static void rds_cong_notify_worker(struct work_struct *work)
 		atomic64_or(atomic64_read(&rs->rs_cong_mask) & portmask, &rs->rs_cong_notify);
 		atomic64_and(~portmask, &rs->rs_cong_mask);
 		if (atomic64_read(&rs->rs_cong_notify)) {
-			trace_rds_cong_notify(rs, rs->rs_conn,
-					      rs->rs_conn ?
-					      &rs->rs_conn->c_path[0] :
-					      NULL,
+			trace_rds_cong_notify(rs, NULL, NULL,
 					      "cong map update", 0);
 			rds_wake_sk_sleep(rs);
 		}
@@ -296,20 +293,11 @@ void rds_cong_remove_conn(struct rds_connection *conn)
 
 int rds_cong_get_maps(struct rds_connection *conn)
 {
-	int hash_inx;
-
 	conn->c_lcong = rds_cong_from_addr(conn->c_rns, &conn->c_laddr);
 	conn->c_fcong = rds_cong_from_addr(conn->c_rns, &conn->c_faddr);
 
 	if (!(conn->c_lcong && conn->c_fcong))
 		return -ENOMEM;
-
-	hash_inx = jhash_3words(conn->c_laddr.s6_addr32[0],
-				conn->c_laddr.s6_addr32[1] ^ conn->c_laddr.s6_addr32[2],
-				conn->c_laddr.s6_addr32[3] ^ conn->c_tos,
-				JHASH_INITVAL) & (RDS_NMBR_WAITQ - 1);
-
-	conn->c_fcong->m_wait_queue_ptr = rds_poll_waitq + hash_inx;
 
 	return 0;
 }
@@ -347,8 +335,8 @@ void rds_cong_map_updated(struct rds_connection *conn,
 	atomic_inc(&rns->rns_cong_generation);
 	if (waitqueue_active(&map->m_waitq))
 		wake_up(&map->m_waitq);
-	if (waitqueue_active(map->m_wait_queue_ptr))
-		wake_up_all(map->m_wait_queue_ptr);
+	if (waitqueue_active(&rds_poll_waitq))
+		wake_up_all(&rds_poll_waitq);
 
 	if (!portmask || list_empty(&rds_cong_monitor->rc_monitor))
 		return;

@@ -38,19 +38,6 @@ static int led_legacy_multicolors[][2] = {
    { 0, 0 },
 };
 
-static void scd_led_pmw_config_set(struct scd_context *ctx, u32 regbase)
-{
-   u32 red_addr = regbase + 0x30;
-   u32 green_addr = regbase + 0x34;
-   u32 blue_addr = regbase + 0x38;
-   u32 blue_reg = 0x0;
-   u32 red_reg = 0x0;
-   u32 green_reg = 0x1FFFFFF;
-   scd_write_register(ctx->pdev, green_addr, green_reg);
-   scd_write_register(ctx->pdev, red_addr, red_reg);
-   scd_write_register(ctx->pdev, blue_addr, blue_reg);
-}
-
 static void scd_led_tricolor_config_set(struct scd_context *ctx, u32 regbase)
 {
    struct regs {
@@ -74,7 +61,7 @@ static void scd_led_tricolor_config_set(struct scd_context *ctx, u32 regbase)
    };
 
    for (int i = 0; i < 12; ++i)
-      scd_write_register(ctx->pdev, regbase + palette[i].offset, palette[i].value);
+      scd_write_register(ctx->dev, regbase + palette[i].offset, palette[i].value);
 }
 
 static void led_brightness_set_legacy(struct led_classdev *led_cdev,
@@ -105,23 +92,11 @@ static void led_brightness_set_legacy(struct led_classdev *led_cdev,
    case 6:
       reg = 0x1C06ff00;
       break;
-   case 7:
-      scd_led_pmw_config_set(led->ctx, 0x6f00);
-      return;
-   case 10:
-      reg = 0x0;
-      break;
-   case 11:
-      reg = 0x0A000000;
-      break;
-   case 13:
-      reg = 0x0E000000;
-      break;
    default:
       reg = 0x1806ff00;
       break;
    }
-   scd_write_register(led->ctx->pdev, led->addr, reg);
+   scd_write_register(led->ctx->dev, led->addr, reg);
 }
 
 static void led_brightness_set_mono(struct led_classdev *led_cdev,
@@ -130,7 +105,7 @@ static void led_brightness_set_mono(struct led_classdev *led_cdev,
    struct scd_led *led = container_of(led_cdev, struct scd_led, cdev);
    u32 reg = (brightness > 0) * BIT(27);
 
-   scd_write_register(led->ctx->pdev, led->addr, reg);
+   scd_write_register(led->ctx->dev, led->addr, reg);
 }
 
 static void led_brightness_set_multi(struct led_classdev *led_cdev,
@@ -145,7 +120,7 @@ static void led_brightness_set_multi(struct led_classdev *led_cdev,
       return;
 
    /* Maintain blink state. */
-   reg = scd_read_register(led->ctx->pdev, led->addr);
+   reg = scd_read_register(led->ctx->dev, led->addr);
    reg &= SCD_BLINK_MASK * ((int)brightness > 0);
 
    reg |= (led->subleds[0].brightness > 0) * BIT(27);
@@ -159,7 +134,7 @@ static void led_brightness_set_multi(struct led_classdev *led_cdev,
          reg &= BIT(27);
    }
 
-   scd_write_register(led->ctx->pdev, led->addr, reg);
+   scd_write_register(led->ctx->dev, led->addr, reg);
 }
 
 static void led_brightness_set_tricolor(struct led_classdev *led_cdev,
@@ -179,7 +154,7 @@ static void led_brightness_set_tricolor(struct led_classdev *led_cdev,
    reg |= !!(led->subleds[1].brightness) << 25;
    reg |= !!(led->subleds[2].brightness) << 24;
 
-   scd_write_register(led->ctx->pdev, led->addr, reg);
+   scd_write_register(led->ctx->dev, led->addr, reg);
 }
 
 static void led_brightness_set_rgb8(struct led_classdev *led_cdev,
@@ -194,7 +169,7 @@ static void led_brightness_set_rgb8(struct led_classdev *led_cdev,
       return;
 
    /* Maintain blink state. */
-   reg = scd_read_register(led->ctx->pdev, led->addr);
+   reg = scd_read_register(led->ctx->dev, led->addr);
    reg &= SCD_BLINK_MASK * ((int)brightness > 0);
 
    reg |= led->subleds[0].brightness
@@ -205,7 +180,7 @@ static void led_brightness_set_rgb8(struct led_classdev *led_cdev,
    reg |= !!(led->subleds[1].brightness) << 28;
    reg |= !!(led->subleds[2].brightness) << 29;
 
-   scd_write_register(led->ctx->pdev, led->addr, reg);
+   scd_write_register(led->ctx->dev, led->addr, reg);
 }
 
 static int scd_led_blink_set(struct led_classdev* led_cdev,
@@ -220,13 +195,13 @@ static int scd_led_blink_set(struct led_classdev* led_cdev,
    if (blink_addr == 0)
       return -ENODEV;
 
-   rate = scd_read_register(led->ctx->pdev, blink_addr);
+   rate = scd_read_register(led->ctx->dev, blink_addr);
    *delay_on = rate;
    *delay_off = rate;
 
-   reg = scd_read_register(led->ctx->pdev, led->addr);
+   reg = scd_read_register(led->ctx->dev, led->addr);
    reg |= SCD_BLINK_MASK;
-   scd_write_register(led->ctx->pdev, led->addr, reg);
+   scd_write_register(led->ctx->dev, led->addr, reg);
 
    return 0;
 }
@@ -383,7 +358,10 @@ int scd_led_add(struct scd_context *ctx, const char *name, u32 addr,
    led->ctx = ctx;
    led->addr = addr;
    led->kind = kind;
-   strncpy(led->name, name, sizeof_field(typeof(*led), name));
+   if (strscpy(led->name, name, sizeof(led->name)) < 0) {
+      kfree(led);
+      return -EINVAL;
+   }
    led->cdev.name = led->name;
    INIT_LIST_HEAD(&led->list);
 

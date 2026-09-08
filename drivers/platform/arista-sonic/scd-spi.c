@@ -24,7 +24,7 @@
 #include "scd-hwmon.h"
 
 #define spi_prefix(_func, _spi, _fmt, _args...)            \
-   _func(&(_spi)->ctx->pdev->dev,    \
+   _func((_spi)->ctx->dev,    \
          "spi @ %#x: " _fmt, (_spi)->csr_addr, ##_args)
 #define spi_dbg(_spi, _fmt, _args...)                       \
    spi_prefix(dev_dbg, _spi, _fmt, ##_args)
@@ -48,13 +48,13 @@ static struct spi_controller *scd_spi_get_controller(struct scd_context *ctx,
 
 static u32 spi_csr_read(struct scd_spi_controller *spi, u32 reg_offset)
 {
-   return scd_read_register(spi->ctx->pdev, spi->csr_addr + reg_offset);
+   return scd_read_register(spi->ctx->dev, spi->csr_addr + reg_offset);
 }
 
 static void spi_csr_write(struct scd_spi_controller *spi,
                           u32 reg_offset, u32 val)
 {
-   scd_write_register(spi->ctx->pdev,
+   scd_write_register(spi->ctx->dev,
                       spi->csr_addr + reg_offset, val);
 }
 
@@ -249,6 +249,16 @@ int scd_spi_controller_add(struct scd_context *ctx, u32 addr, u32 reg_stride,
    dev_dbg(dev, "adding spi controller %d at addr %#x\n",
            bus, addr);
 
+   /*
+    * The parse layer only bounds the base addr and reg_stride against
+    * res_size individually; the actual register accesses are at
+    * csr_addr + {0, reg_stride, 2 * reg_stride}, so the highest derived
+    * offset must also stay within the mapped resource.  The register
+    * accessors require offset < mem_len == res_size.
+    */
+   if ((size_t)addr + 2 * (size_t)reg_stride >= ctx->res_size)
+      return -EINVAL;
+
    controller = spi_alloc_master(dev, sizeof(struct scd_spi_controller));
    if (!controller) {
       return -ENOMEM;
@@ -286,6 +296,13 @@ int scd_spi_controller_add(struct scd_context *ctx, u32 addr, u32 reg_stride,
    }
 
    spi->controller = controller;
+   /*
+    * scd_spi_controller (spi) is devdata embedded in the controller
+    * allocation. Hold an extra reference so spi_unregister_controller()
+    * at remove time does not drop the last ref and free the struct out
+    * from under us; the matching put is in scd_spi_controller_remove_all.
+    */
+   spi_controller_get(controller);
    list_add_tail(&spi->list, &ctx->spi_controller_list);
    spi_notice(spi, "controller created\n");
    return 0;
@@ -318,9 +335,16 @@ void scd_spi_controller_remove_all(struct scd_context *ctx)
    struct scd_spi_controller *tmp_spi;
 
    list_for_each_entry_safe(spi, tmp_spi, &ctx->spi_controller_list, list) {
+      struct spi_controller *controller = spi->controller;
+
       scd_spi_controller_remove(spi);
       list_del(&spi->list);
-      kfree(spi);
+      /*
+       * spi is devdata inside the controller allocation; releasing the
+       * extra reference taken at add time frees both. Do not kfree(spi):
+       * it is not a separate slab object.
+       */
+      spi_controller_put(controller);
    }
 }
 

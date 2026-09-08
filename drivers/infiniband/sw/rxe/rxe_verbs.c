@@ -1319,6 +1319,7 @@ static struct ib_mr *rxe_rereg_user_mr(struct ib_mr *ibmr, int flags,
 	struct rxe_mr *mr = to_rmr(ibmr);
 	struct rxe_pd *old_pd = to_rpd(ibmr->pd);
 	struct rxe_pd *pd = to_rpd(ibpd);
+	int err;
 
 	/* for now only support the two easy cases:
 	 * rereg_pd and rereg_access
@@ -1327,6 +1328,10 @@ static struct ib_mr *rxe_rereg_user_mr(struct ib_mr *ibmr, int flags,
 		rxe_err_mr(mr, "flags = %#x not supported\n", flags);
 		return ERR_PTR(-EOPNOTSUPP);
 	}
+
+	err = ib_umem_check_rereg(mr->umem, flags, access);
+	if (err)
+		return ERR_PTR(err);
 
 	if (flags & IB_MR_REREG_PD) {
 		rxe_put(old_pd);
@@ -1458,6 +1463,7 @@ static struct ib_pd *rxe_share_pd(struct ib_device *dev,
 	struct rxe_dev *rxe = to_rdev(dev);
 	struct ib_pd  *ibpd;
 	struct rxe_pd *pd;
+	int ret;
 
 	ibpd = rdma_zalloc_drv_obj(dev, ib_pd);
 	if (!ibpd)
@@ -1468,10 +1474,15 @@ static struct ib_pd *rxe_share_pd(struct ib_device *dev,
 
 	pd->real_rxepd = to_rshpd(shpd)->shared_rxepd;
 	pd->pdn = to_rshpd(shpd)->shared_pdn;
-	rxe_link_to_pool(&rxe->pd_pool, pd);
+	ret = rxe_link_to_pool(&rxe->pd_pool, pd);
+	if (ret) {
+		kfree(pd);
+		return ERR_PTR(ret);
+	}
 
 	if (context)
 		if (ib_copy_to_udata(udata, &pd->pdn, sizeof(__u32))) {
+			rxe_unlink(pd);
 			kfree(pd);
 			return ERR_PTR(-EFAULT);
 		}

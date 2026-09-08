@@ -8873,6 +8873,11 @@ F:	drivers/base/firmware_loader/
 F:	rust/kernel/firmware.rs
 F:	include/linux/firmware.h
 
+FIXED-LAYOUT NVMEM LAYOUT DRIVER
+M:	Mathieu Dubois-Briand <mathieu.dubois-briand@bootlin.com>
+S:	Maintained
+F:	drivers/nvmem/layouts/fixed-layout.c
+
 FLEXTIMER FTM-QUADDEC DRIVER
 M:	Patrick Havelange <patrick.havelange@essensium.com>
 L:	linux-iio@vger.kernel.org
@@ -15995,7 +16000,8 @@ M:	Breno Leitao <leitao@debian.org>
 S:	Maintained
 F:	Documentation/networking/netconsole.rst
 F:	drivers/net/netconsole.c
-F:	tools/testing/selftests/drivers/net/netcons_basic.sh
+F:	tools/testing/selftests/drivers/net/lib/sh/lib_netcons.sh
+F:	tools/testing/selftests/drivers/net/netcons\*
 
 NETDEVSIM
 M:	Jakub Kicinski <kuba@kernel.org>
@@ -16111,7 +16117,7 @@ F:	include/linux/inetdevice.h
 F:	include/linux/netdev*
 F:	include/linux/platform_data/wiznet.h
 F:	include/uapi/linux/cn_proc.h
-F:	include/uapi/linux/ethtool_netlink.h
+F:	include/uapi/linux/ethtool_netlink*
 F:	include/uapi/linux/if_*
 F:	include/uapi/linux/net_shaper.h
 F:	include/uapi/linux/netdev*
@@ -18235,6 +18241,13 @@ F:	Documentation/driver-api/pin-control.rst
 F:	drivers/pinctrl/
 F:	include/dt-bindings/pinctrl/
 F:	include/linux/pinctrl/
+
+PIN CONTROLLER - AIROHA
+M:	Lorenzo Bianconi <lorenzo@kernel.org>
+L:	linux-mediatek@lists.infradead.org (moderated for non-subscribers)
+S:	Maintained
+F:	Documentation/devicetree/bindings/pinctrl/airoha,en7581-pinctrl.yaml
+F:	drivers/pinctrl/mediatek/pinctrl-airoha.c
 
 PIN CONTROLLER - AMD
 M:	Basavaraj Natikar <Basavaraj.Natikar@amd.com>

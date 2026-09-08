@@ -13,7 +13,6 @@
 #include <asm/unwind_hints.h>
 #include <asm/percpu.h>
 #include <asm/current.h>
-#include <asm/ptrace-abi.h>
 
 /*
  * Call depth tracking for Intel SKL CPUs to address the RSB underflow
@@ -211,11 +210,14 @@
  * The LFENCE fixes this by ensuring step 5 is never reached speculatively.
  * Note that this LFENCE only occurs if safe-RET was actually interrupted (so
  * it's outside of the normal path).
+ *
+ * (The 128 below is RIP offset, used as a naked number here for ease of
+ * backporting).
  */
 #define __HANDLE_INTR_SAFERET(name, pt_regs)		\
-	cmpq	$(name), RIP+pt_regs;			\
+	cmpq	$(name), 128+pt_regs;			\
 	jb	1f;					\
-	cmpq	$(name)+5, RIP+pt_regs;			\
+	cmpq	$(name)+5, 128+pt_regs;			\
 	ja	1f;					\
 	lfence;						\
 	leaq	pt_regs, %rdi;				\
